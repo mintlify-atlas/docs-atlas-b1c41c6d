@@ -1,0 +1,152 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Cerbos",
+  "projectDescription": "Open core, language-agnostic, scalable authorization solution for implementing context-aware access control policies.",
+  "theme": "aspen",
+  "primaryColor": "#1E40AF",
+  "lightColor": "#3B82F6",
+  "darkColor": "#1E3A8A",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "concepts"
+            ]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/container",
+              "installation/binary",
+              "installation/helm"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/kubernetes",
+              "deployment/systemd",
+              "deployment/aws-lambda",
+              "deployment/docker"
+            ]
+          },
+          {
+            "group": "Policies",
+            "pages": [
+              "policies/overview",
+              "policies/resource-policies",
+              "policies/derived-roles",
+              "policies/principal-policies",
+              "policies/conditions",
+              "policies/testing"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/server",
+              "configuration/storage",
+              "configuration/schema",
+              "configuration/audit-logs"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/monitoring",
+              "operations/security",
+              "operations/performance",
+              "operations/troubleshooting"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "integration/sdks",
+              "integration/examples",
+              "integration/query-plan-adapters"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "PDP APIs",
+            "pages": [
+              "api/check-resources",
+              "api/plan-resources",
+              "api/server-info"
+            ]
+          },
+          {
+            "group": "Admin APIs",
+            "pages": [
+              "api/admin/policies",
+              "api/admin/schemas",
+              "api/admin/audit-logs",
+              "api/admin/store"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Cerbos Server",
+            "pages": [
+              "cli/cerbos/server",
+              "cli/cerbos/compile",
+              "cli/cerbos/run"
+            ]
+          },
+          {
+            "group": "Cerbosctl",
+            "pages": [
+              "cli/cerbosctl/overview",
+              "cli/cerbosctl/get",
+              "cli/cerbosctl/put",
+              "cli/cerbosctl/decisions",
+              "cli/cerbosctl/audit"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Context-aware access control with YAML policies",
+    "Resource, derived role, and principal policies",
+    "High-performance Policy Decision Point (PDP)",
+    "Kubernetes, Lambda, and systemd deployment",
+    "Multiple storage backends (disk, S3, Git, databases)",
+    "Admin API for policy management",
+    "Query planning for efficient database queries",
+    "Comprehensive audit logging"
+  ],
+  "publicApiSurface": [
+    "CheckResources - Check principal permissions for resources",
+    "PlanResources - Generate query plans for resource access",
+    "ServerInfo - Get PDP server information",
+    "AddOrUpdatePolicy - Manage policies via Admin API",
+    "ListPolicies - List all policies",
+    "GetPolicy - Retrieve specific policy",
+    "DeletePolicy - Remove policy",
+    "DisablePolicy/EnablePolicy - Toggle policy state",
+    "AddOrUpdateSchema - Manage attribute schemas",
+    "ListAuditLogEntries - Access audit logs",
+    "cerbos server - Start the PDP server",
+    "cerbos compile - Compile and validate policies",
+    "cerbosctl get - Retrieve policies and schemas",
+    "cerbosctl put - Upload policies and schemas",
+    "cerbosctl decisions - Check authorization decisions"
+  ]
+}
