@@ -1,0 +1,223 @@
+---
+title: Schema Management APIs
+description: Admin APIs for managing JSON schemas used to validate principal and resource attributes in Cerbos policies.
+---
+
+The Schema Management APIs allow administrators to manage JSON schemas that validate principal and resource attributes. All endpoints require BasicAuth authentication.
+
+## AddOrUpdateSchema
+
+Add or update one or more JSON schemas in the schema store.
+
+### HTTP Request
+
+```bash
+POST /admin/schema
+PUT /admin/schema
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Request Body
+
+<ParamField body="schemas" type="array" required>
+  Array of schema objects to add or update. Minimum 1, maximum 100 schemas.
+  
+  <Expandable title="Schema Object">
+    <ParamField body="id" type="string" required>
+      Unique identifier for the schema. Maximum 255 characters.
+      
+      Example: `principal.json`
+    </ParamField>
+    
+    <ParamField body="definition" type="bytes" required>
+      JSON schema definition as bytes. Minimum 10 bytes.
+      
+      Example: `{"type":"object", "properties":{"department":{"type":"string"}}}`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+Returns an empty response object on success.
+
+### Example Request
+
+```bash
+curl -X POST https://cerbos.example.com/admin/schema \
+  -u admin:password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "schemas": [
+      {
+        "id": "principal.json",
+        "definition": {
+          "type": "object",
+          "properties": {
+            "department": {"type": "string"},
+            "role": {"type": "string"},
+            "level": {"type": "number"}
+          },
+          "required": ["department"]
+        }
+      }
+    ]
+  }'
+```
+
+---
+
+## ListSchemas
+
+List all schema IDs stored in the Cerbos server.
+
+### HTTP Request
+
+```bash
+GET /admin/schemas
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Response
+
+<ResponseField name="schemaIds" type="array">
+  Array of schema ID strings
+</ResponseField>
+
+### Example Request
+
+```bash
+curl https://cerbos.example.com/admin/schemas \
+  -u admin:password
+```
+
+### Example Response
+
+```json
+{
+  "schemaIds": [
+    "principal.json",
+    "resource.album.json",
+    "resource.photo.json"
+  ]
+}
+```
+
+---
+
+## GetSchema
+
+Retrieve one or more schemas by their IDs.
+
+### HTTP Request
+
+```bash
+GET /admin/schema
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Query Parameters
+
+<ParamField query="id" type="array" required>
+  One or more schema IDs to retrieve. Minimum 1 ID required. Each ID must be between 1 and 255 characters.
+  
+  Example: `principal.json`
+</ParamField>
+
+### Response
+
+<ResponseField name="schemas" type="array">
+  Array of schema objects matching the requested IDs
+  
+  <Expandable title="Schema Object">
+    <ResponseField name="id" type="string">
+      Unique identifier for the schema
+    </ResponseField>
+    
+    <ResponseField name="definition" type="bytes">
+      JSON schema definition
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl "https://cerbos.example.com/admin/schema?id=principal.json" \
+  -u admin:password
+```
+
+### Example Response
+
+```json
+{
+  "schemas": [
+    {
+      "id": "principal.json",
+      "definition": {
+        "type": "object",
+        "properties": {
+          "department": {"type": "string"},
+          "role": {"type": "string"},
+          "level": {"type": "number"}
+        },
+        "required": ["department"]
+      }
+    }
+  ]
+}
+```
+
+---
+
+## DeleteSchema
+
+Permanently delete one or more schemas from the schema store.
+
+### HTTP Request
+
+```bash
+DELETE /admin/schema
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Query Parameters
+
+<ParamField query="id" type="array" required>
+  One or more schema IDs to delete. Minimum 1 ID required. Each ID must be between 1 and 255 characters.
+  
+  Example: `principal.json`
+</ParamField>
+
+### Response
+
+<ResponseField name="deletedSchemas" type="number">
+  Number of schemas successfully deleted
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X DELETE "https://cerbos.example.com/admin/schema?id=principal.json" \
+  -u admin:password
+```
+
+### Example Response
+
+```json
+{
+  "deletedSchemas": 1
+}
+```

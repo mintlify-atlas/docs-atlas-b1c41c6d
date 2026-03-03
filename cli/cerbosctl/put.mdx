@@ -1,0 +1,351 @@
+---
+title: "cerbosctl put"
+description: "Upload policies and schemas to the Cerbos server"
+---
+
+## Overview
+
+The `put` command uploads policies and schemas to a Cerbos server. It supports uploading individual files, multiple files, entire directories, and ZIP archives.
+
+## Syntax
+
+```bash
+cerbosctl put <subcommand> <path...> [flags]
+```
+
+## Subcommands
+
+### Put Policies
+
+Upload policy files to the Cerbos server.
+
+**Aliases:** `policy`, `policies`, `p`
+
+```bash
+cerbosctl put policy <path...> [flags]
+```
+
+#### Examples
+
+<Steps>
+
+<Step title="Upload a single policy file">
+
+```bash
+cerbosctl put policy ./path/to/policy.yaml
+```
+
+Uploads a single policy file to the server.
+
+</Step>
+
+<Step title="Upload multiple policy files">
+
+```bash
+cerbosctl put policy ./path/to/policy1.yaml ./path/to/policy2.yaml
+```
+
+Uploads multiple policy files in one command.
+
+</Step>
+
+<Step title="Upload policies from directories">
+
+```bash
+cerbosctl put policy ./dir/to/policies ./other/dir/to/policies
+```
+
+Uploads all policy files found in the specified directories (non-recursive by default).
+
+</Step>
+
+<Step title="Upload policies recursively">
+
+```bash
+cerbosctl put policy --recursive ./dir/to/policies
+cerbosctl put policy -R ./dir/to/policies
+```
+
+Uploads all policy files in the directory and its subdirectories.
+
+</Step>
+
+<Step title="Upload policies from a ZIP file">
+
+```bash
+cerbosctl put policy ./dir/to/policies.zip
+```
+
+Extracts and uploads all policy files from a ZIP archive.
+
+</Step>
+
+</Steps>
+
+### Put Schemas
+
+Upload JSON schema files to the Cerbos server.
+
+**Aliases:** `schema`, `schemas`, `s`
+
+```bash
+cerbosctl put schema <path...> [flags]
+```
+
+#### Examples
+
+<Steps>
+
+<Step title="Upload a single schema file">
+
+```bash
+cerbosctl put schema ./path/to/schema.json
+```
+
+Uploads a single schema file to the server.
+
+</Step>
+
+<Step title="Upload multiple schema files">
+
+```bash
+cerbosctl put schema ./path/to/schema1.json ./path/to/schema2.json
+```
+
+Uploads multiple schema files in one command.
+
+</Step>
+
+<Step title="Upload schemas from directories">
+
+```bash
+cerbosctl put schema ./dir/to/schemas ./other/dir/to/schemas
+```
+
+Uploads all schema files found in the specified directories.
+
+</Step>
+
+<Step title="Upload schemas recursively">
+
+```bash
+cerbosctl put schema --recursive ./dir/to/schemas
+cerbosctl put schema -R ./dir/to/schemas
+```
+
+Uploads all schema files in the directory and its subdirectories.
+
+</Step>
+
+<Step title="Upload schemas from a ZIP file">
+
+```bash
+cerbosctl put schema ./dir/to/schemas.zip
+```
+
+Extracts and uploads all schema files from a ZIP archive.
+
+</Step>
+
+</Steps>
+
+## Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--recursive` | `-R` | Process the directory used in paths recursively |
+
+## Understanding the Output
+
+When you upload files, cerbosctl provides a summary of the operation:
+
+```
+Uploaded: 5
+Ignored: 2
+Errors:
+- /path/to/invalid_policy.yaml: validation error: missing required field 'apiVersion'
+- /path/to/another_policy.yaml: validation error: invalid policy kind
+```
+
+- **Uploaded**: Number of files successfully uploaded to the server
+- **Ignored**: Number of files that were skipped due to errors
+- **Errors**: Detailed list of files that failed and the reasons why
+
+## File Types
+
+### Policy Files
+
+Cerbosctl recognizes policy files with the following extensions:
+- `.yaml`
+- `.yml`
+
+Policy files must be valid Cerbos policy definitions (resource policies, principal policies, derived roles, etc.).
+
+### Schema Files
+
+Cerbosctl recognizes schema files with the following extension:
+- `.json`
+
+Schema files must be valid JSON Schema definitions used for validating principal and resource attributes.
+
+## Common Patterns
+
+### Organize Policies in Directories
+
+Organize your policies by type for easier management:
+
+```bash
+policies/
+├── resource/
+│   ├── leave_request.yaml
+│   └── expense_report.yaml
+├── principal/
+│   └── admin.yaml
+└── derived_roles/
+    └── hr_roles.yaml
+```
+
+Upload all policies at once:
+
+```bash
+cerbosctl put policy -R ./policies
+```
+
+### Upload Schemas for Validation
+
+```bash
+schemas/
+├── principal.json
+├── leave_request.json
+└── expense_report.json
+```
+
+Upload all schemas:
+
+```bash
+cerbosctl put schema ./schemas/*.json
+```
+
+### Deploy from CI/CD
+
+Integrate cerbosctl into your CI/CD pipeline:
+
+```bash
+#!/bin/bash
+set -e
+
+# Upload policies
+cerbosctl put policy -R ./policies
+
+# Upload schemas
+cerbosctl put schema ./schemas/*.json
+
+echo "Deployment complete"
+```
+
+## Error Handling
+
+Cerbosctl validates files before uploading. Common errors include:
+
+### Missing Required Fields
+
+```
+Error: validation error: missing required field 'apiVersion'
+```
+
+Ensure your policy file includes all required fields.
+
+### Invalid Policy Format
+
+```
+Error: failed to parse policy: yaml: unmarshal errors
+```
+
+Check that your YAML is well-formed and follows the Cerbos policy schema.
+
+### Schema Validation Errors
+
+```
+Error: invalid JSON schema: schema is not valid
+```
+
+Ensure your schema file is valid JSON and follows JSON Schema specification.
+
+### Connection Errors
+
+```
+Error: failed to add or update the policies: connection refused
+```
+
+Verify that:
+- The Cerbos server is running
+- The `--server` address is correct
+- Admin API is enabled
+- Authentication credentials are valid
+
+## Advanced Usage
+
+### Combining Multiple Operations
+
+You can upload policies and schemas in sequence:
+
+```bash
+cerbosctl put policy -R ./policies && \
+cerbosctl put schema ./schemas/*.json
+```
+
+### Using with Environment Variables
+
+Set up your environment once:
+
+```bash
+export CERBOS_SERVER=prod.example.com:3593
+export CERBOS_USERNAME=admin
+export CERBOS_PASSWORD=secret
+
+cerbosctl put policy -R ./policies
+```
+
+### Dry Run Alternative
+
+While cerbosctl doesn't have a built-in dry run, you can use the `inspect` command to validate policies locally before uploading:
+
+```bash
+# Validate policies locally first
+cerbosctl inspect policies ./policies/*.yaml
+
+# Then upload
+cerbosctl put policy -R ./policies
+```
+
+## Working with Mutable Stores
+
+When using mutable policy stores (database-backed), the `put` command will:
+
+1. **Create** new policies if they don't exist
+2. **Update** existing policies if they already exist (based on policy ID)
+3. **Validate** all policies before applying changes
+
+The server determines if a policy is new or an update based on its policy ID (e.g., `resource.leave_request.default`).
+
+## Best Practices
+
+<Card title="Version Control" icon="git">
+Store your policies and schemas in version control (Git) to track changes over time.
+</Card>
+
+<Card title="Test Before Production" icon="flask">
+Test policy uploads in a development environment before deploying to production.
+</Card>
+
+<Card title="Use Recursive Flag Carefully" icon="folder-tree">
+The `-R` flag processes entire directory trees. Ensure only valid policy files are in the directory.
+</Card>
+
+<Card title="Automate Deployments" icon="robot">
+Integrate cerbosctl into your CI/CD pipeline for automated policy deployments.
+</Card>
+
+<Card title="Monitor Upload Results" icon="chart-line">
+Always check the upload summary to ensure all files were processed successfully.
+</Card>

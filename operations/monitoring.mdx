@@ -1,0 +1,439 @@
+---
+title: Monitoring and Observability
+description: Configure metrics, health checks, and distributed tracing for production Cerbos deployments
+---
+
+Cerbos provides comprehensive observability features including Prometheus metrics, OpenTelemetry support, and health check endpoints for production monitoring.
+
+## Health Checks
+
+Cerbos exposes health check endpoints for both HTTP and gRPC protocols to verify service availability.
+
+### HTTP Health Endpoint
+
+The HTTP health check endpoint is available at `/_cerbos/health`:
+
+```bash
+curl http://localhost:3592/_cerbos/health?service=cerbos.svc.v1.CerbosService
+```
+
+**Response Codes:**
+- `200 OK`: Service is healthy and serving requests
+- Non-200: Service is unavailable or experiencing issues
+
+### gRPC Health Check
+
+Cerbos implements the standard gRPC Health Checking Protocol. Use the gRPC health check service:
+
+```bash
+grpc_health_probe -addr=localhost:3593 -service=cerbos.svc.v1.CerbosService
+```
+
+### Using the Healthcheck Command
+
+Cerbos includes a built-in healthcheck command for Docker and Kubernetes:
+
+```bash
+# Check gRPC endpoint using config file
+cerbos healthcheck --config=/path/to/.cerbos.yaml
+
+# Check HTTP endpoint
+cerbos healthcheck --config=/path/to/.cerbos.yaml --kind=http
+
+# Manual check without config
+cerbos healthcheck --kind=grpc --host-port=localhost:3593
+
+# Skip TLS verification (development only)
+cerbos healthcheck --kind=http --host-port=localhost:3592 --insecure
+```
+
+**Configuration Options:**
+- `--config`: Path to Cerbos configuration file
+- `--kind`: Health check type (`grpc` or `http`)
+- `--host-port`: Target host and port
+- `--timeout`: Health check timeout (default: 2s)
+- `--insecure`: Skip certificate verification
+- `--no-tls`: Disable TLS
+
+### Docker Healthcheck
+
+Add to your Dockerfile:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD ["/cerbos", "healthcheck", "--config=/config/.cerbos.yaml"]
+```
+
+### Kubernetes Probes
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /_cerbos/health?service=cerbos.svc.v1.CerbosService
+    port: 3592
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /_cerbos/health?service=cerbos.svc.v1.CerbosService
+    port: 3592
+  initialDelaySeconds: 3
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 2
+```
+
+## Prometheus Metrics
+
+Cerbos exposes Prometheus-compatible metrics at `/_cerbos/metrics` on the HTTP port (default: 3592).
+
+### Enabling Metrics
+
+Metrics are enabled by default. To disable:
+
+```yaml
+server:
+  metricsEnabled: false
+```
+
+### Scraping Metrics
+
+```bash
+curl http://localhost:3592/_cerbos/metrics
+```
+
+### Key Metrics
+
+#### Engine Performance
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cerbos_dev_engine_check_latency` | Histogram | Time to evaluate a policy decision (ms) |
+| `cerbos_dev_engine_check_batch_size` | Histogram | Distribution of batch sizes in check requests |
+| `cerbos_dev_engine_plan_latency` | Histogram | Time to generate a query plan (ms) |
+
+#### Policy Compilation
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cerbos_dev_compiler_compile_duration` | Histogram | Policy compilation time (ms) |
+
+#### Storage Operations
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cerbos_dev_store_poll_count` | Counter | Number of times remote store was polled |
+| `cerbos_dev_store_sync_error_count` | Counter | Errors during store synchronization |
+| `cerbos_dev_store_last_successful_refresh` | Gauge | Timestamp of last successful refresh |
+| `cerbos_dev_store_bundle_op_latency` | Histogram | Bundle operation latency (ms) |
+| `cerbos_dev_store_bundle_fetch_errors_count` | Counter | Bundle download errors |
+| `cerbos_dev_store_bundle_updates_count` | Counter | Bundle updates from remote source |
+
+#### Cache Performance
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cerbos_dev_cache_access_count` | Counter | Cache access attempts (with result label) |
+| `cerbos_dev_cache_live_objects` | Gauge | Number of objects currently in cache |
+| `cerbos_dev_cache_max_size` | Gauge | Maximum cache capacity |
+
+#### Policy Index
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cerbos_dev_index_entry_count` | Gauge | Number of entries in policy index |
+| `cerbos_dev_index_crud_count` | Counter | Create/update/delete operations |
+
+#### Audit Logging
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cerbos_dev_audit_error_count` | Counter | Audit log write errors |
+| `cerbos_dev_audit_oversized_entry_count` | Counter | Entries exceeding maximum size |
+
+#### Cerbos Hub
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cerbos_dev_hub_connected` | Gauge | Connection status (1=connected, 0=disconnected) |
+
+#### Runtime Metrics
+
+Cerbos automatically exports Go runtime metrics including:
+- Memory allocation and GC statistics
+- Goroutine counts
+- CPU usage
+
+### Prometheus Configuration
+
+```yaml
+scrape_configs:
+  - job_name: 'cerbos'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['cerbos:3592']
+    metrics_path: /_cerbos/metrics
+```
+
+## OpenTelemetry Integration
+
+### OTLP Metrics
+
+Configure OTLP metrics export using environment variables:
+
+```bash
+# Enable OTLP metrics exporter
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://otel-collector:4318/v1/metrics
+
+# Optional: Configure protocol (grpc or http/protobuf)
+export OTEL_EXPORTER_OTLP_METRICS_PROTOCOL=grpc
+
+# Optional: Configure export intervals
+export OTEL_METRIC_EXPORT_INTERVAL=60000  # milliseconds
+export OTEL_METRIC_EXPORT_TIMEOUT=30000   # milliseconds
+```
+
+**TLS Configuration:**
+
+```bash
+# Skip certificate validation (development only)
+export OTEL_EXPORTER_OTLP_METRICS_INSECURE=true
+
+# Custom CA certificate
+export OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE=/path/to/ca.crt
+
+# Mutual TLS
+export OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE=/path/to/client.crt
+export OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY=/path/to/client.key
+```
+
+### Distributed Tracing
+
+Enable distributed tracing to track request flows:
+
+```bash
+# Required: Set OTLP endpoint
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://jaeger:4317
+
+# Optional: Service name in traces
+export OTEL_SERVICE_NAME=cerbos-prod
+
+# Sampling configuration
+export OTEL_TRACES_SAMPLER=parentbased_traceidratio
+export OTEL_TRACES_SAMPLER_ARG=0.1  # Sample 10% of traces
+```
+
+**Sampling Strategies:**
+
+| Sampler | Description | Use Case |
+|---------|-------------|----------|
+| `always_on` | Record every trace | Development, debugging |
+| `always_off` | No traces recorded | Tracing disabled |
+| `traceidratio` | Sample based on trace ID | Production with controlled overhead |
+| `parentbased_always_on` | Record if parent sampled | Distributed systems |
+| `parentbased_traceidratio` | Ratio-based with parent context | Fine-grained control |
+
+**Protocol Options:**
+
+```bash
+# gRPC (default)
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc
+
+# HTTP
+export OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/protobuf
+```
+
+## Logging Configuration
+
+Cerbos uses structured logging with configurable log levels.
+
+### Log Levels
+
+Set via configuration or environment variable:
+
+```yaml
+server:
+  logLevel: info
+```
+
+```bash
+export CERBOS_LOG_LEVEL=debug
+```
+
+**Available Levels:**
+- `DEBUG` or `V1`, `V2`, etc. - Verbose debugging
+- `INFO` - Standard operational information
+- `WARN` - Warning messages
+- `ERROR` - Error conditions
+
+### Log Format
+
+Cerbos automatically detects terminal output:
+- **TTY detected**: Colored console output
+- **Non-TTY**: JSON structured logs (ECS format)
+
+### Temporary Debug Logging
+
+Send `SIGUSR1` signal to temporarily enable debug logging:
+
+```bash
+kill -USR1 <cerbos-pid>
+```
+
+Debug logging automatically reverts after 10 minutes (configurable via `CERBOS_TEMP_LOG_LEVEL_DURATION`).
+
+### Request Payload Logging
+
+For debugging, enable request/response payload logging:
+
+```yaml
+server:
+  logRequestPayloads: true
+```
+
+<Warning>
+Payload logging impacts performance and may expose sensitive data. Only enable in controlled environments.
+</Warning>
+
+## Audit Logging
+
+Audit logs capture access decisions and policy evaluations. See the Audit configuration documentation for details.
+
+### Audit Metrics Integration
+
+Monitor audit log health:
+
+```promql
+# Audit error rate
+rate(cerbos_dev_audit_error_count[5m])
+
+# Oversized entries
+rate(cerbos_dev_audit_oversized_entry_count[5m])
+```
+
+## Monitoring Best Practices
+
+### Critical Alerts
+
+1. **Service Health**: Alert on failed health checks
+2. **High Latency**: `cerbos_dev_engine_check_latency` > 100ms (p95)
+3. **Store Sync Failures**: `cerbos_dev_store_sync_error_count` increasing
+4. **Audit Errors**: `cerbos_dev_audit_error_count` > 0
+5. **Hub Disconnection**: `cerbos_dev_hub_connected` = 0
+
+### Performance Monitoring
+
+```promql
+# P95 check latency
+histogram_quantile(0.95, rate(cerbos_dev_engine_check_latency_bucket[5m]))
+
+# Check throughput
+rate(cerbos_dev_engine_check_latency_count[5m])
+
+# Cache hit rate
+sum(rate(cerbos_dev_cache_access_count{result="hit"}[5m])) / 
+sum(rate(cerbos_dev_cache_access_count[5m]))
+
+# Store freshness
+time() - cerbos_dev_store_last_successful_refresh
+```
+
+### Dashboard Recommendations
+
+1. **Overview**: Service health, request rate, error rate, latency
+2. **Performance**: Latency percentiles, batch sizes, cache metrics
+3. **Storage**: Sync status, bundle updates, policy count
+4. **Resources**: Memory, CPU, goroutines, GC metrics
+
+## Admin API Metrics
+
+When the Admin API is enabled, additional endpoints are available:
+
+```bash
+# gRPC reflection and channelz
+grpcurl -plaintext localhost:3593 list
+
+# Admin service health
+grpcurl -plaintext localhost:3593 grpc.health.v1.Health/Check \
+  -d '{"service":"cerbos.svc.v1.CerbosAdminService"}'
+```
+
+## Observability Stack Examples
+
+<AccordionGroup>
+  <Accordion title="Prometheus + Grafana">
+    ```yaml
+    # docker-compose.yml
+    version: '3.8'
+    services:
+      cerbos:
+        image: ghcr.io/cerbos/cerbos:latest
+        ports:
+          - "3592:3592"
+          - "3593:3593"
+        
+      prometheus:
+        image: prom/prometheus
+        volumes:
+          - ./prometheus.yml:/etc/prometheus/prometheus.yml
+        ports:
+          - "9090:9090"
+      
+      grafana:
+        image: grafana/grafana
+        ports:
+          - "3000:3000"
+        environment:
+          - GF_SECURITY_ADMIN_PASSWORD=admin
+    ```
+  </Accordion>
+
+  <Accordion title="OpenTelemetry Collector">
+    ```yaml
+    # docker-compose.yml
+    version: '3.8'
+    services:
+      cerbos:
+        image: ghcr.io/cerbos/cerbos:latest
+        environment:
+          - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+          - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://otel-collector:4317
+          - OTEL_TRACES_SAMPLER=parentbased_traceidratio
+          - OTEL_TRACES_SAMPLER_ARG=0.1
+          - OTEL_METRICS_EXPORTER=otlp
+      
+      otel-collector:
+        image: otel/opentelemetry-collector-contrib
+        volumes:
+          - ./otel-config.yaml:/etc/otel-config.yaml
+        command: ["--config=/etc/otel-config.yaml"]
+        ports:
+          - "4317:4317"  # OTLP gRPC
+          - "4318:4318"  # OTLP HTTP
+    ```
+  </Accordion>
+
+  <Accordion title="Jaeger Tracing">
+    ```yaml
+    version: '3.8'
+    services:
+      cerbos:
+        image: ghcr.io/cerbos/cerbos:latest
+        environment:
+          - OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://jaeger:4317
+          - OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=grpc
+          - OTEL_TRACES_SAMPLER=always_on
+          - OTEL_SERVICE_NAME=cerbos
+      
+      jaeger:
+        image: jaegertracing/all-in-one:latest
+        ports:
+          - "16686:16686"  # Jaeger UI
+          - "4317:4317"    # OTLP gRPC
+    ```
+  </Accordion>
+</AccordionGroup>

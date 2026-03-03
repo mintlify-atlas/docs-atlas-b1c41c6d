@@ -1,0 +1,389 @@
+---
+title: Policy Management APIs
+description: Admin APIs for managing Cerbos policies including adding, updating, listing, retrieving, deleting, disabling, and enabling policies.
+---
+
+The Policy Management APIs allow administrators to manage policies in the Cerbos Policy Decision Point. All endpoints require BasicAuth authentication.
+
+## AddOrUpdatePolicy
+
+Add or update one or more policies in the policy store.
+
+### HTTP Request
+
+```bash
+POST /admin/policy
+PUT /admin/policy
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Request Body
+
+<ParamField body="policies" type="array" required>
+  Array of policy objects to add or update. Minimum 1, maximum 100 policies.
+  
+  <Expandable title="Policy Object">
+    <ParamField body="apiVersion" type="string" required>
+      API version, must be "api.cerbos.dev/v1"
+    </ParamField>
+    
+    <ParamField body="disabled" type="boolean">
+      Whether the policy is disabled
+    </ParamField>
+    
+    <ParamField body="description" type="string">
+      Description of the policy
+    </ParamField>
+    
+    <ParamField body="metadata" type="object">
+      Policy metadata including annotations and source information
+    </ParamField>
+    
+    <ParamField body="resourcePolicy" type="object">
+      Resource policy definition (one of resourcePolicy, principalPolicy, or derivedRoles must be specified)
+      
+      <Expandable title="ResourcePolicy Fields">
+        <ParamField body="resource" type="string" required>
+          Resource type identifier
+        </ParamField>
+        
+        <ParamField body="version" type="string" required>
+          Policy version
+        </ParamField>
+        
+        <ParamField body="rules" type="array">
+          Array of resource rules
+        </ParamField>
+        
+        <ParamField body="scope" type="string">
+          Dot-separated scope hierarchy
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField body="principalPolicy" type="object">
+      Principal policy definition
+    </ParamField>
+    
+    <ParamField body="derivedRoles" type="object">
+      Derived roles definition
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Response
+
+<ResponseField name="success" type="object">
+  Empty object indicating successful operation
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST https://cerbos.example.com/admin/policy \
+  -u admin:password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policies": [
+      {
+        "apiVersion": "api.cerbos.dev/v1",
+        "resourcePolicy": {
+          "resource": "album:object",
+          "version": "default",
+          "rules": [
+            {
+              "actions": ["view", "edit"],
+              "effect": "EFFECT_ALLOW",
+              "roles": ["owner"]
+            }
+          ]
+        }
+      }
+    ]
+  }'
+```
+
+---
+
+## ListPolicies
+
+List all policy IDs stored in the Cerbos server with optional filtering.
+
+### HTTP Request
+
+```bash
+GET /admin/policies
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Query Parameters
+
+<ParamField query="includeDisabled" type="boolean">
+  Include disabled policies in the results
+</ParamField>
+
+<ParamField query="nameRegexp" type="string">
+  Filter policies by name using a regular expression
+</ParamField>
+
+<ParamField query="scopeRegexp" type="string">
+  Filter policies by scope using a regular expression
+</ParamField>
+
+<ParamField query="versionRegexp" type="string">
+  Filter policies by version using a regular expression
+</ParamField>
+
+<ParamField query="policyId" type="array">
+  Filter by specific policy IDs. Maximum 25 IDs. For file-based stores (blob, disk, git), use filename with extension. For database stores (mysql, postgres, sqlite3), use the format `kind.name.version`.
+  
+  Example: `principal.sarah.vdefault`
+</ParamField>
+
+### Response
+
+<ResponseField name="policyIds" type="array">
+  Array of policy ID strings
+</ResponseField>
+
+### Example Request
+
+```bash
+curl https://cerbos.example.com/admin/policies?includeDisabled=true \
+  -u admin:password
+```
+
+### Example Response
+
+```json
+{
+  "policyIds": [
+    "principal.sarah.vdefault",
+    "resource.album.vdefault",
+    "derived_roles.common_roles"
+  ]
+}
+```
+
+---
+
+## GetPolicy
+
+Retrieve one or more policies by their IDs.
+
+### HTTP Request
+
+```bash
+GET /admin/policy
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Query Parameters
+
+<ParamField query="id" type="array" required>
+  One or more policy IDs to retrieve. Minimum 1 ID required. For file-based stores (blob, disk, git), use filename with extension. For database stores (mysql, postgres, sqlite3), use the format `kind.name.version`.
+  
+  Example: `principal.sarah.vdefault`
+</ParamField>
+
+### Response
+
+<ResponseField name="policies" type="array">
+  Array of policy objects matching the requested IDs
+  
+  <Expandable title="Policy Object">
+    <ResponseField name="apiVersion" type="string">
+      API version
+    </ResponseField>
+    
+    <ResponseField name="disabled" type="boolean">
+      Whether the policy is disabled
+    </ResponseField>
+    
+    <ResponseField name="description" type="string">
+      Policy description
+    </ResponseField>
+    
+    <ResponseField name="metadata" type="object">
+      Policy metadata
+    </ResponseField>
+    
+    <ResponseField name="resourcePolicy" type="object">
+      Resource policy definition (if applicable)
+    </ResponseField>
+    
+    <ResponseField name="principalPolicy" type="object">
+      Principal policy definition (if applicable)
+    </ResponseField>
+    
+    <ResponseField name="derivedRoles" type="object">
+      Derived roles definition (if applicable)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl "https://cerbos.example.com/admin/policy?id=principal.sarah.vdefault" \
+  -u admin:password
+```
+
+---
+
+## DeletePolicy
+
+Permanently delete one or more policies from the policy store.
+
+### HTTP Request
+
+```bash
+POST /admin/policy/delete
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Request Body
+
+<ParamField body="id" type="array" required>
+  Array of policy IDs to delete. Minimum 1, maximum 20 IDs. For file-based stores (blob, disk, git), use filename with extension. For database stores (mysql, postgres, sqlite3), use the format `kind.name.version`.
+  
+  Example: `principal.sarah.vdefault`
+</ParamField>
+
+### Response
+
+<ResponseField name="deletedPolicies" type="number">
+  Number of policies successfully deleted
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST https://cerbos.example.com/admin/policy/delete \
+  -u admin:password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": ["principal.sarah.vdefault"]
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "deletedPolicies": 1
+}
+```
+
+---
+
+## DisablePolicy
+
+Disable one or more policies without deleting them. Disabled policies are not evaluated during authorization checks.
+
+### HTTP Request
+
+```bash
+POST /admin/policy/disable
+PUT /admin/policy/disable
+DELETE /admin/policy
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Request Body
+
+<ParamField body="id" type="array" required>
+  Array of policy IDs to disable. Minimum 1, maximum 20 IDs. For file-based stores (blob, disk, git), use filename with extension. For database stores (mysql, postgres, sqlite3), use the format `kind.name.version`.
+  
+  Example: `principal.sarah.vdefault`
+</ParamField>
+
+### Response
+
+<ResponseField name="disabledPolicies" type="number">
+  Number of policies successfully disabled
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST https://cerbos.example.com/admin/policy/disable \
+  -u admin:password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": ["principal.sarah.vdefault"]
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "disabledPolicies": 1
+}
+```
+
+---
+
+## EnablePolicy
+
+Re-enable one or more previously disabled policies.
+
+### HTTP Request
+
+```bash
+POST /admin/policy/enable
+PUT /admin/policy/enable
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Request Body
+
+<ParamField body="id" type="array" required>
+  Array of policy IDs to enable. Minimum 1 ID required. For file-based stores (blob, disk, git), use filename with extension. For database stores (mysql, postgres, sqlite3), use the format `kind.name.version`.
+  
+  Example: `principal.sarah.vdefault`
+</ParamField>
+
+### Response
+
+<ResponseField name="enabledPolicies" type="number">
+  Number of policies successfully enabled
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST https://cerbos.example.com/admin/policy/enable \
+  -u admin:password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": ["principal.sarah.vdefault"]
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "enabledPolicies": 1
+}
+```

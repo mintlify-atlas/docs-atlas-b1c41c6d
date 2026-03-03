@@ -1,0 +1,228 @@
+---
+title: Audit Log APIs
+description: Admin APIs for retrieving and streaming audit log entries from Cerbos including access logs and decision logs.
+---
+
+The Audit Log APIs allow administrators to retrieve audit log entries from the Cerbos Policy Decision Point. All endpoints require BasicAuth authentication.
+
+## ListAuditLogEntries
+
+Retrieve audit log entries as a stream. This API supports querying both access logs (admin API calls) and decision logs (authorization checks).
+
+### HTTP Request
+
+```bash
+GET /admin/auditlog/list/{kind}
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Path Parameters
+
+<ParamField path="kind" type="string" required>
+  Type of audit log entries to retrieve. Must be one of:
+  
+  - `KIND_ACCESS` - Admin API access logs
+  - `KIND_DECISION` - Authorization decision logs
+</ParamField>
+
+### Query Parameters
+
+Exactly one of the following filter parameters must be specified:
+
+<ParamField query="tail" type="number">
+  Retrieve the last N entries. Minimum 1, maximum 1000.
+  
+  Example: `tail=100`
+</ParamField>
+
+<ParamField query="between" type="object">
+  Retrieve entries within a time range.
+  
+  <Expandable title="TimeRange Object">
+    <ParamField query="start" type="timestamp" required>
+      Start date in ISO 8601 format. Must be in the past.
+      
+      Example: `2021-07-05T07:27:01+00:00`
+    </ParamField>
+    
+    <ParamField query="end" type="timestamp" required>
+      End date in ISO 8601 format. Must be in the past.
+      
+      Example: `2021-07-05T08:27:01+00:00`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField query="since" type="duration">
+  Retrieve entries since N hours/minutes ago.
+  
+  Example: `since=1h` or `since=30m`
+</ParamField>
+
+<ParamField query="lookup" type="string">
+  Retrieve a specific entry by its Call ID. Must be a 26-character ULID.
+  
+  Pattern: `^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{26}$`
+</ParamField>
+
+### Response
+
+The response is a stream of audit log entries. Each entry contains either an access log entry or a decision log entry.
+
+<ResponseField name="entry" type="object">
+  <Expandable title="Entry Object">
+    <ResponseField name="accessLogEntry" type="object">
+      Access log entry for admin API calls
+      
+      <Expandable title="AccessLogEntry Fields">
+        <ResponseField name="callId" type="string">
+          Unique identifier for this API call
+        </ResponseField>
+        
+        <ResponseField name="timestamp" type="timestamp">
+          When the call was made
+        </ResponseField>
+        
+        <ResponseField name="peer" type="object">
+          Information about the client making the request
+        </ResponseField>
+        
+        <ResponseField name="method" type="string">
+          HTTP method used
+        </ResponseField>
+        
+        <ResponseField name="path" type="string">
+          API endpoint path
+        </ResponseField>
+        
+        <ResponseField name="statusCode" type="number">
+          HTTP status code returned
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="decisionLogEntry" type="object">
+      Decision log entry for authorization checks
+      
+      <Expandable title="DecisionLogEntry Fields">
+        <ResponseField name="callId" type="string">
+          Unique identifier for this authorization check
+        </ResponseField>
+        
+        <ResponseField name="timestamp" type="timestamp">
+          When the check was performed
+        </ResponseField>
+        
+        <ResponseField name="peer" type="object">
+          Information about the client making the request
+        </ResponseField>
+        
+        <ResponseField name="inputs" type="array">
+          Input data for the authorization check (principal, resource, actions)
+        </ResponseField>
+        
+        <ResponseField name="outputs" type="array">
+          Authorization decisions (effects per action)
+        </ResponseField>
+        
+        <ResponseField name="error" type="string">
+          Error message if the check failed
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request - Last 10 Decision Logs
+
+```bash
+curl "https://cerbos.example.com/admin/auditlog/list/KIND_DECISION?tail=10" \
+  -u admin:password
+```
+
+### Example Request - Access Logs Since 1 Hour Ago
+
+```bash
+curl "https://cerbos.example.com/admin/auditlog/list/KIND_ACCESS?since=1h" \
+  -u admin:password
+```
+
+### Example Request - Logs Between Time Range
+
+```bash
+curl "https://cerbos.example.com/admin/auditlog/list/KIND_DECISION?between.start=2021-07-05T07:27:01Z&between.end=2021-07-05T08:27:01Z" \
+  -u admin:password
+```
+
+### Example Request - Lookup Specific Call
+
+```bash
+curl "https://cerbos.example.com/admin/auditlog/list/KIND_DECISION?lookup=01ARZ3NDEKTSV4RRFFQ69G5FAV" \
+  -u admin:password
+```
+
+### Example Response
+
+```json
+{
+  "decisionLogEntry": {
+    "callId": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "timestamp": "2021-07-05T07:27:01Z",
+    "peer": {
+      "address": "192.168.1.100:54321",
+      "userAgent": "cerbos-sdk-go/0.1.0"
+    },
+    "inputs": [
+      {
+        "principal": {
+          "id": "user123",
+          "roles": ["user"]
+        },
+        "resource": {
+          "kind": "album:object",
+          "id": "album_1"
+        },
+        "actions": ["view", "edit"]
+      }
+    ],
+    "outputs": [
+      {
+        "resourceId": "album_1",
+        "actions": {
+          "view": "EFFECT_ALLOW",
+          "edit": "EFFECT_DENY"
+        }
+      }
+    ]
+  }
+}
+```
+
+## Use Cases
+
+### Monitoring Authorization Decisions
+
+Use decision logs to:
+- Track which users are accessing which resources
+- Audit permission grants and denials
+- Identify patterns in authorization failures
+- Debug policy evaluation issues
+
+### Monitoring Admin Operations
+
+Use access logs to:
+- Track policy changes and updates
+- Monitor schema modifications
+- Audit administrative access to the PDP
+- Investigate security incidents
+
+### Compliance and Reporting
+
+Both log types support:
+- Time-based queries for compliance reports
+- Specific call ID lookups for incident investigation
+- Streaming for real-time monitoring
+- Integration with external log aggregation systems

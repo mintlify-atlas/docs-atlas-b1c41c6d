@@ -1,0 +1,604 @@
+---
+title: "Core Concepts"
+description: "Understand the fundamental building blocks of Cerbos authorization: Principals, Actions, Resources, Policies, and the Policy Decision Point"
+---
+
+## Overview
+
+Cerbos authorization revolves around answering one key question:
+
+<Note>
+  **Can this PRINCIPAL perform this ACTION on this RESOURCE?**
+</Note>
+
+Understanding these core concepts is essential to designing effective authorization policies with Cerbos.
+
+## Principal
+
+A **principal** is the entity attempting to perform an action. Most commonly a user, but can represent:
+
+- Users (authenticated humans)
+- Service accounts
+- Applications
+- Bots or automated systems
+- IoT devices
+- Any identifiable actor
+
+### Principal Attributes
+
+Principals have three key properties:
+
+<AccordionGroup>
+  <Accordion title="ID" icon="fingerprint">
+    A unique identifier for the principal.
+    
+    ```json
+    "id": "user_12345"
+    ```
+  </Accordion>
+  
+  <Accordion title="Roles" icon="user-tag">
+    Static roles assigned to the principal (e.g., from your identity provider).
+    
+    ```json
+    "roles": ["user", "manager", "admin"]
+    ```
+  </Accordion>
+  
+  <Accordion title="Attributes" icon="tags">
+    Contextual information about the principal used in policy conditions.
+    
+    ```json
+    "attr": {
+      "department": "engineering",
+      "region": "us-west",
+      "subscription_tier": "premium",
+      "beta_tester": true
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Example Principal
+
+<CodeGroup>
+```json API Request
+{
+  "principal": {
+    "id": "alice@example.com",
+    "roles": ["user", "manager"],
+    "attr": {
+      "department": "engineering",
+      "region": "us-west-2",
+      "clearance_level": 3
+    }
+  }
+}
+```
+
+```go Go SDK
+principal := cerbos.NewPrincipal("alice@example.com", "user", "manager")
+principal.WithAttr("department", "engineering")
+principal.WithAttr("region", "us-west-2")
+principal.WithAttr("clearance_level", 3)
+```
+</CodeGroup>
+
+<Info>
+  **Bring Your Own Identity**: Cerbos doesn't manage authentication. Use any identity provider (Auth0, Okta, AWS Cognito, custom JWT, etc.) and pass the principal information to Cerbos.
+</Info>
+
+## Action
+
+An **action** is a specific operation a principal wants to perform. Actions are defined by you based on your application's domain.
+
+### Common Action Patterns
+
+<CardGroup cols={2}>
+  <Card title="CRUD Operations" icon="database">
+    ```text
+    create
+    read
+    update
+    delete
+    ```
+  </Card>
+  
+  <Card title="Custom Operations" icon="wand-magic-sparkles">
+    ```text
+    approve
+    publish
+    archive
+    share
+    export
+    flag
+    ```
+  </Card>
+  
+  <Card title="Namespaced Actions" icon="folder-tree">
+    ```text
+    view:public
+    view:private
+    edit:metadata
+    edit:content
+    ```
+  </Card>
+  
+  <Card title="Wildcards" icon="asterisk">
+    ```text
+    *           (all actions)
+    view:*      (all view actions)
+    ```
+  </Card>
+</CardGroup>
+
+### Actions in Requests
+
+Check multiple actions in a single request:
+
+```json
+{
+  "actions": ["read", "update", "delete", "share"]
+}
+```
+
+Cerbos returns individual ALLOW/DENY decisions for each action.
+
+## Resource
+
+A **resource** is the object or entity being accessed. Resources are organized by **kind** (type) and have individual **instances** with unique IDs.
+
+### Resource Structure
+
+<Steps>
+  <Step title="Resource Kind">
+    The type or category of resource. Defines which policy to use.
+    
+    ```yaml
+    kind: "document"
+    kind: "album:object"
+    kind: "expense_report"
+    ```
+    
+    <Tip>Use namespacing like `album:object` or `album:photo` to organize related resource types.</Tip>
+  </Step>
+  
+  <Step title="Resource ID">
+    The unique identifier for a specific resource instance.
+    
+    ```yaml
+    id: "doc_12345"
+    id: "album_abc"
+    ```
+  </Step>
+  
+  <Step title="Resource Attributes">
+    Contextual information about the resource used in policy conditions.
+    
+    ```yaml
+    attr:
+      owner: "alice@example.com"
+      status: "draft"
+      public: true
+      department: "engineering"
+      created_at: "2024-01-15"
+    ```
+  </Step>
+</Steps>
+
+### Example Resource
+
+<CodeGroup>
+```json API Request
+{
+  "resource": {
+    "kind": "expense_report",
+    "id": "report_789",
+    "attr": {
+      "owner": "alice@example.com",
+      "status": "submitted",
+      "amount": 2500,
+      "department": "engineering"
+    }
+  }
+}
+```
+
+```go Go SDK
+resource := cerbos.NewResource("expense_report", "report_789")
+resource.WithAttributes(map[string]any{
+    "owner":      "alice@example.com",
+    "status":     "submitted",
+    "amount":     2500,
+    "department": "engineering",
+})
+```
+</CodeGroup>
+
+## Policies
+
+**Policies** are YAML files that define authorization rules. They specify which principals can perform which actions on resources.
+
+### Policy Types
+
+Cerbos supports three types of policies:
+
+<Tabs>
+  <Tab title="Resource Policies">
+    Define rules for a specific resource kind. This is the primary policy type.
+    
+    ```yaml
+    ---
+    apiVersion: api.cerbos.dev/v1
+    resourcePolicy:
+      resource: "expense_report"
+      version: "default"
+      rules:
+        - actions: ['create', 'read']
+          effect: EFFECT_ALLOW
+          roles:
+            - employee
+        
+        - actions: ['approve']
+          effect: EFFECT_ALLOW
+          roles:
+            - manager
+          condition:
+            match:
+              expr: request.resource.attr.department == request.principal.attr.department
+    ```
+    
+    <Info>
+      **Use for:** Standard authorization rules that apply to all instances of a resource type
+    </Info>
+  </Tab>
+  
+  <Tab title="Derived Roles">
+    Dynamically assign roles based on context. Extend RBAC with attribute-based conditions.
+    
+    ```yaml
+    ---
+    apiVersion: "api.cerbos.dev/v1"
+    derivedRoles:
+      name: common_roles
+      definitions:
+        - name: owner
+          parentRoles: ["user"]
+          condition:
+            match:
+              expr: request.resource.attr.owner == request.principal.id
+        
+        - name: dept_member
+          parentRoles: ["employee"]
+          condition:
+            match:
+              expr: request.resource.attr.department == request.principal.attr.department
+    ```
+    
+    <Info>
+      **Use for:** Context-dependent roles that change based on resource attributes
+    </Info>
+  </Tab>
+  
+  <Tab title="Principal Policies">
+    Override rules for specific principals. Handle special cases and exceptions.
+    
+    ```yaml
+    ---
+    apiVersion: "api.cerbos.dev/v1"
+    principalPolicy:
+      principal: "admin_user_123"
+      version: "default"
+      rules:
+        - resource: "*"
+          actions:
+            - name: read_all
+              action: "read"
+              effect: EFFECT_ALLOW
+    ```
+    
+    <Info>
+      **Use for:** User-specific overrides and exceptions to general rules
+    </Info>
+  </Tab>
+</Tabs>
+
+### Policy Rules
+
+Rules within policies have several components:
+
+<AccordionGroup>
+  <Accordion title="Actions" icon="list-check">
+    Which actions this rule applies to.
+    
+    ```yaml
+    actions: ['read', 'update']
+    actions: ['*']  # all actions
+    ```
+  </Accordion>
+  
+  <Accordion title="Effect" icon="circle-check">
+    Whether to allow or deny the action.
+    
+    ```yaml
+    effect: EFFECT_ALLOW
+    effect: EFFECT_DENY
+    ```
+  </Accordion>
+  
+  <Accordion title="Roles or Derived Roles" icon="users">
+    Which roles this rule applies to.
+    
+    ```yaml
+    roles:
+      - user
+      - manager
+    
+    derivedRoles:
+      - owner
+    ```
+  </Accordion>
+  
+  <Accordion title="Condition (Optional)" icon="filter">
+    Additional attribute-based conditions for the rule.
+    
+    ```yaml
+    condition:
+      match:
+        expr: |
+          request.resource.attr.status == "draft" &&
+          request.principal.attr.department == request.resource.attr.department
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Policy Decision Point (PDP)
+
+The **Policy Decision Point (PDP)** is the Cerbos service that evaluates policies and makes authorization decisions.
+
+### How the PDP Works
+
+<Steps>
+  <Step title="Load Policies">
+    The PDP continuously monitors your policy storage location (disk, S3, Git, database) and loads policies into memory.
+  </Step>
+  
+  <Step title="Receive Requests">
+    Your application sends authorization requests via gRPC or HTTP to the PDP.
+  </Step>
+  
+  <Step title="Evaluate Policies">
+    The PDP matches the request against the appropriate policies, evaluates conditions, and determines the outcome.
+  </Step>
+  
+  <Step title="Return Decision">
+    The PDP returns EFFECT_ALLOW or EFFECT_DENY for each action requested.
+  </Step>
+</Steps>
+
+### PDP Characteristics
+
+<CardGroup cols={2}>
+  <Card title="Stateless" icon="feather">
+    No session state. Each request is independent. Scale horizontally.
+  </Card>
+  
+  <Card title="Fast" icon="bolt">
+    In-memory evaluation. Sub-millisecond policy decisions.
+  </Card>
+  
+  <Card title="Hot Reload" icon="rotate">
+    Detects policy changes automatically. No restart required.
+  </Card>
+  
+  <Card title="Audit Logs" icon="file-lines">
+    Optional decision logging for compliance and debugging.
+  </Card>
+</CardGroup>
+
+### Primary APIs
+
+The PDP exposes two main APIs:
+
+<Tabs>
+  <Tab title="CheckResources">
+    Check if a principal can perform actions on specific resources.
+    
+    **Use case:** "Can Alice delete document #123?"
+    
+    ```json Request
+    {
+      "principal": { "id": "alice", "roles": ["user"] },
+      "resources": [
+        {
+          "resource": { "kind": "document", "id": "123" },
+          "actions": ["read", "delete"]
+        }
+      ]
+    }
+    ```
+    
+    ```json Response
+    {
+      "results": [
+        {
+          "resource": { "id": "123", "kind": "document" },
+          "actions": {
+            "read": "EFFECT_ALLOW",
+            "delete": "EFFECT_DENY"
+          }
+        }
+      ]
+    }
+    ```
+  </Tab>
+  
+  <Tab title="PlanResources">
+    Get a query plan showing which resources a principal can access.
+    
+    **Use case:** "Which documents can Alice read?" (for database filtering)
+    
+    ```json Request
+    {
+      "principal": { "id": "alice", "roles": ["user"] },
+      "resource": { "kind": "document" },
+      "action": "read"
+    }
+    ```
+    
+    ```json Response
+    {
+      "filter": {
+        "kind": "CONDITIONAL",
+        "condition": {
+          "expression": {
+            "operator": "or",
+            "operands": [
+              { "expression": { "operator": "eq", "operands": [{"variable": "owner"}, {"value": "alice"}] } },
+              { "expression": { "operator": "eq", "operands": [{"variable": "public"}, {"value": true}] } }
+            ]
+          }
+        }
+      }
+    }
+    ```
+    
+    Use [query plan adapters](/integration/query-plan-adapters) to convert this to SQL, Prisma, SQLAlchemy, etc.
+  </Tab>
+</Tabs>
+
+## RBAC vs ABAC
+
+Cerbos supports both Role-Based Access Control (RBAC) and Attribute-Based Access Control (ABAC).
+
+### Role-Based Access Control (RBAC)
+
+Simple role-based rules:
+
+```yaml RBAC Example
+rules:
+  - actions: ['read', 'create']
+    effect: EFFECT_ALLOW
+    roles:
+      - user
+  
+  - actions: ['delete']
+    effect: EFFECT_ALLOW
+    roles:
+      - admin
+```
+
+### Attribute-Based Access Control (ABAC)
+
+Add conditions for fine-grained control:
+
+```yaml ABAC Example
+rules:
+  - actions: ['approve']
+    effect: EFFECT_ALLOW
+    roles:
+      - manager
+    condition:
+      match:
+        expr: |
+          request.resource.attr.amount < 10000 &&
+          request.resource.attr.department == request.principal.attr.department
+```
+
+### Evolution Path
+
+<Steps>
+  <Step title="Start with RBAC">
+    Define simple role-based rules that are easy to understand and maintain.
+  </Step>
+  
+  <Step title="Add Derived Roles">
+    Introduce context-dependent roles like "owner" or "team_member".
+  </Step>
+  
+  <Step title="Layer on Conditions">
+    Add attribute-based conditions for granular control without creating role explosion.
+  </Step>
+  
+  <Step title="Handle Exceptions">
+    Use principal policies for specific user overrides when needed.
+  </Step>
+</Steps>
+
+<Tip>
+  Start simple with RBAC and evolve to ABAC as your authorization requirements become more complex.
+</Tip>
+
+## Policy Storage
+
+Cerbos supports multiple storage backends for policies:
+
+<CardGroup cols={2}>
+  <Card title="Disk" icon="hard-drive">
+    Local filesystem. Great for development and small deployments.
+  </Card>
+  
+  <Card title="Git" icon="git">
+    Pull policies from Git repositories. Ideal for GitOps workflows.
+  </Card>
+  
+  <Card title="Cloud Storage" icon="cloud">
+    S3, GCS, Azure Blob. Scalable policy distribution.
+  </Card>
+  
+  <Card title="Database" icon="database">
+    SQLite, PostgreSQL, MySQL. Dynamic policy management.
+  </Card>
+</CardGroup>
+
+See [Storage Configuration](/configuration/storage) for details.
+
+## Putting It All Together
+
+Here's how all the concepts work together:
+
+<Steps>
+  <Step title="Define Your Model">
+    Identify your principals (users, services), resources (documents, albums), and actions (read, write, share).
+  </Step>
+  
+  <Step title="Write Policies">
+    Create resource policies defining who can do what. Add derived roles for dynamic role assignment.
+  </Step>
+  
+  <Step title="Deploy the PDP">
+    Run Cerbos with your policies. Choose your deployment model (sidecar, service, Lambda).
+  </Step>
+  
+  <Step title="Make Authorization Calls">
+    From your application, call CheckResources to verify permissions or PlanResources to filter queries.
+  </Step>
+  
+  <Step title="Iterate on Policies">
+    Update policies as requirements change. The PDP reloads them automatically.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Try the Quickstart" icon="rocket" href="/quickstart">
+    See these concepts in action with a working example
+  </Card>
+  
+  <Card title="Explore Policies" icon="book" href="/policies/overview">
+    Learn policy authoring patterns and best practices
+  </Card>
+  
+  <Card title="Deploy Cerbos" icon="server" href="/deployment/kubernetes">
+    Choose the right deployment model for your infrastructure
+  </Card>
+  
+  <Card title="Integration Guide" icon="plug" href="/integration/sdks">
+    Integrate Cerbos into your application with SDKs
+  </Card>
+</CardGroup>
+
+<Note>
+  **Questions?** Join the [Cerbos Slack community](http://go.cerbos.io/slack) or check the [full documentation](https://docs.cerbos.dev).
+</Note>

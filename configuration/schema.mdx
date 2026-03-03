@@ -1,0 +1,350 @@
+---
+title: Schema Configuration
+description: Configure attribute schema validation to enforce type safety and structure for principal and resource attributes
+---
+
+Cerbos can validate principal and resource attributes against JSON schemas to ensure type safety and catch errors early.
+
+## Overview
+
+Schema validation helps prevent runtime errors by ensuring that attributes passed to policies conform to expected structures and types. This is particularly useful in large deployments where multiple teams interact with Cerbos.
+
+## Configuration
+
+<ParamField path="schema.enforcement" type="string" default="none">
+  Enforcement level for schema validation. Valid values:
+  - `none`: No schema validation performed
+  - `warn`: Log warnings when validation fails, but allow the request
+  - `reject`: Reject requests that fail schema validation
+</ParamField>
+
+<ParamField path="schema.cacheSize" type="integer" default="1024">
+  Number of compiled schemas to cache in memory for performance.
+</ParamField>
+
+## Basic Configuration
+
+```yaml
+schema:
+  enforcement: reject
+  cacheSize: 1024
+```
+
+## Enforcement Modes
+
+### None (Default)
+
+No schema validation is performed. Policies execute with whatever attributes are provided.
+
+```yaml
+schema:
+  enforcement: none
+```
+
+<Note>
+  This is the default mode and suitable when you want maximum flexibility or are just starting with Cerbos.
+</Note>
+
+### Warn
+
+Validation errors are logged as warnings, but requests proceed normally. Use this mode to test schemas before enforcing them.
+
+```yaml
+schema:
+  enforcement: warn
+  cacheSize: 2048
+```
+
+<Note>
+  Monitor logs for validation warnings to identify schema mismatches:
+  
+  ```
+  WARN Schema validation failed for principal attributes: field 'department' has invalid type
+  ```
+</Note>
+
+### Reject
+
+Requests with invalid attributes are rejected with an error. This provides the strictest validation.
+
+```yaml
+schema:
+  enforcement: reject
+  cacheSize: 1024
+```
+
+<Warning>
+  Enabling `reject` mode requires all referenced schemas to be defined and valid. Missing schemas will cause requests to fail.
+</Warning>
+
+## Schema Definitions
+
+Schemas are defined as separate policy files with the `_schemas` suffix in the filename.
+
+### Principal Schema
+
+Define expected structure for principal attributes:
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+principalSchema:
+  ref: cerbos:///principal.json
+  definitions:
+    principal:
+      type: object
+      required:
+        - id
+        - roles
+      properties:
+        id:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        department:
+          type: string
+          enum: ["engineering", "sales", "marketing"]
+        level:
+          type: integer
+          minimum: 1
+          maximum: 10
+        attributes:
+          type: object
+          properties:
+            geography:
+              type: string
+            team:
+              type: string
+```
+
+### Resource Schema
+
+Define expected structure for resource attributes:
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+resourceSchema:
+  ref: cerbos:///document.json
+  definitions:
+    document:
+      type: object
+      required:
+        - id
+        - owner
+        - status
+      properties:
+        id:
+          type: string
+        owner:
+          type: string
+        status:
+          type: string
+          enum: ["draft", "published", "archived"]
+        createdAt:
+          type: string
+          format: date-time
+        tags:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+```
+
+## Schema References in Policies
+
+Reference schemas in your resource policies:
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  resource: document
+  schemas:
+    principalSchema:
+      ref: cerbos:///principal.json
+    resourceSchema:
+      ref: cerbos:///document.json
+  
+  rules:
+    - actions: ["view", "edit"]
+      effect: EFFECT_ALLOW
+      roles: ["editor"]
+      condition:
+        match:
+          expr: resource.attr.status == "draft"
+```
+
+## Schema Storage
+
+Schemas are stored alongside policies in your configured storage backend:
+
+```
+policies/
+  _schemas/
+    principal_schema.yaml
+    document_schema.yaml
+  resource_policies/
+    document.yaml
+    album.yaml
+```
+
+## Cache Configuration
+
+The schema cache improves performance by keeping compiled schemas in memory.
+
+<ParamField path="schema.cacheSize" type="integer" default="1024">
+  Number of schemas to cache. Increase this if you have many unique schemas.
+</ParamField>
+
+```yaml
+schema:
+  enforcement: reject
+  cacheSize: 4096  # Increase for large deployments
+```
+
+<Note>
+  Each unique schema reference counts as one cache entry. Monitor cache hit rates if you experience performance issues.
+</Note>
+
+## Validation Behavior
+
+When schema validation is enabled:
+
+1. **Schema Lookup**: Cerbos checks if the policy references a schema
+2. **Attribute Validation**: Principal and resource attributes are validated against their schemas
+3. **Error Handling**: Based on enforcement mode:
+   - `none`: Skip validation
+   - `warn`: Log warning, continue execution
+   - `reject`: Return error, halt execution
+
+## Best Practices
+
+### Start with Warn Mode
+
+Begin with `warn` mode to identify schema issues without blocking requests:
+
+```yaml
+schema:
+  enforcement: warn
+```
+
+Monitor logs and fix validation errors, then switch to `reject`.
+
+### Define Required Fields
+
+Always specify required fields to catch missing attributes:
+
+```yaml
+properties:
+  id:
+    type: string
+  status:
+    type: string
+required:
+  - id
+  - status
+```
+
+### Use Enums for Fixed Values
+
+Constrain fields to known values:
+
+```yaml
+status:
+  type: string
+  enum: ["draft", "published", "archived"]
+```
+
+### Version Your Schemas
+
+Include schema version in the reference:
+
+```yaml
+schemas:
+  principalSchema:
+    ref: cerbos:///principal.v2.json
+```
+
+## Complete Example
+
+```yaml
+schema:
+  enforcement: reject
+  cacheSize: 2048
+```
+
+With corresponding schema files:
+
+**_schemas/principal_schema.yaml:**
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+principalSchema:
+  ref: cerbos:///principal.json
+  definitions:
+    principal:
+      type: object
+      required: ["id", "roles"]
+      properties:
+        id:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        department:
+          type: string
+```
+
+**_schemas/document_schema.yaml:**
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+resourceSchema:
+  ref: cerbos:///document.json
+  definitions:
+    document:
+      type: object
+      required: ["id", "owner"]
+      properties:
+        id:
+          type: string
+        owner:
+          type: string
+        status:
+          type: string
+          enum: ["draft", "published"]
+```
+
+## Environment-Specific Configuration
+
+### Development
+
+```yaml
+schema:
+  enforcement: warn  # Permissive for rapid iteration
+  cacheSize: 512
+```
+
+### Staging
+
+```yaml
+schema:
+  enforcement: reject  # Test strict validation
+  cacheSize: 1024
+```
+
+### Production
+
+```yaml
+schema:
+  enforcement: reject  # Strict validation
+  cacheSize: 4096      # Larger cache for performance
+```

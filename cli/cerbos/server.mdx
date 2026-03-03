@@ -1,0 +1,130 @@
+---
+title: "cerbos server"
+description: "Start the Cerbos server (PDP)"
+---
+
+## Overview
+
+The `cerbos server` command starts the Cerbos Policy Decision Point (PDP) server. This is the main service that evaluates authorization requests against your policies.
+
+## Usage
+
+```bash
+cerbos server [flags]
+```
+
+## Flags
+
+### Configuration
+
+<ParamField path="--config" type="string" default=".cerbos.yaml">
+  Path to the configuration file. Can also be set via the `CERBOS_CONFIG` environment variable.
+</ParamField>
+
+<ParamField path="--set" type="string[]">
+  Override configuration values. Can be specified multiple times.
+  
+  Format: `key=value` (supports nested keys using dot notation)
+  
+  Example: `--set=server.adminAPI.enabled=true`
+</ParamField>
+
+### Logging
+
+<ParamField path="--log-level" type="string" default="info">
+  Set the log level for the server.
+  
+  **Options:** `debug`, `info`, `warn`, `error`
+</ParamField>
+
+### Cerbos Hub Integration
+
+<ParamField path="--hub.deployment-id" type="string">
+  Use Cerbos Hub to pull the policy bundle for the given deployment ID. This overrides the storage driver defined in the configuration.
+  
+  Can also be set via the `CERBOS_HUB_DEPLOYMENT_ID` environment variable.
+</ParamField>
+
+<ParamField path="--hub.playground-id" type="string">
+  Use Cerbos Hub to pull the policy bundle for the given playground ID. This overrides the storage driver defined in the configuration.
+  
+  Can also be set via the `CERBOS_HUB_PLAYGROUND_ID` environment variable.
+</ParamField>
+
+<ParamField path="--hub-bundle" type="string">
+  Legacy option to use Cerbos Hub to pull the policy bundle with the given label. This overrides the storage driver defined in the configuration.
+  
+  Can also be set via the `CERBOS_HUB_BUNDLE` or `CERBOS_CLOUD_BUNDLE` environment variables.
+</ParamField>
+
+### Debug
+
+<ParamField path="--debug-listen-addr" type="string" default=":6666">
+  Address to start the gops debugger listener on.
+</ParamField>
+
+## Examples
+
+### Start the server with default configuration
+
+```bash
+cerbos server
+```
+
+### Start with Admin API enabled and SQLite storage
+
+```bash
+cerbos server \
+  --set=server.adminAPI.enabled=true \
+  --set=storage.driver=sqlite3 \
+  --set=storage.sqlite3.dsn=':memory:'
+```
+
+### Start with a custom configuration file
+
+```bash
+cerbos server --config=/path/to/config.yaml
+```
+
+### Start with Cerbos Hub deployment
+
+```bash
+cerbos server --hub.deployment-id=YOUR_DEPLOYMENT_ID
+```
+
+### Start with debug logging
+
+```bash
+cerbos server --log-level=debug
+```
+
+### Multiple configuration overrides
+
+```bash
+cerbos server \
+  --set=server.httpListenAddr=:3592 \
+  --set=server.grpcListenAddr=:3593 \
+  --set=server.adminAPI.enabled=true
+```
+
+## Environment Variables
+
+The following environment variables can be used as alternatives to command-line flags:
+
+- `CERBOS_CONFIG` - Path to configuration file
+- `CERBOS_HUB_DEPLOYMENT_ID` - Hub deployment ID
+- `CERBOS_HUB_PLAYGROUND_ID` - Hub playground ID
+- `CERBOS_HUB_BUNDLE` - Hub bundle label (legacy)
+- `CERBOS_CLOUD_BUNDLE` - Hub bundle label (legacy alias)
+
+## Configuration
+
+The server requires a configuration file (defaults to `.cerbos.yaml` in the current directory). The configuration file defines:
+
+- Server settings (HTTP/gRPC ports, TLS, etc.)
+- Storage backend (disk, git, blob storage, database, Hub)
+- Schema validation settings
+- Audit logging configuration
+- And more
+
+You can override any configuration value using the `--set` flag without modifying the configuration file.

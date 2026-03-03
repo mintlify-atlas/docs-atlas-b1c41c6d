@@ -1,0 +1,184 @@
+---
+title: "Container Installation"
+description: "Install and run Cerbos using Docker or other container runtimes"
+---
+
+Cerbos provides official container images for running the Policy Decision Point (PDP) in containerized environments. Images are available from both GitHub Container Registry and Docker Hub.
+
+## Quick Start
+
+Run Cerbos with the default configuration:
+
+```bash
+docker run --rm --name cerbos -p 3592:3592 ghcr.io/cerbos/cerbos:latest
+```
+
+This starts Cerbos with:
+- HTTP API on port 3592
+- gRPC API on port 3593 (not exposed in this example)
+- Default policy directory at `/policies`
+
+## Container Images
+
+Cerbos images are published to two registries:
+
+- **GitHub Container Registry**: `ghcr.io/cerbos/cerbos:latest`
+- **Docker Hub**: `docker.io/cerbos/cerbos:latest`
+
+Both registries contain identical images. Use version tags for production deployments:
+
+```bash
+docker pull ghcr.io/cerbos/cerbos:0.52.0
+```
+
+## Image Verification
+
+Cerbos images are signed using [Sigstore](https://www.sigstore.dev) and can be verified with Cosign:
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --certificate-identity="https://github.com/cerbos/cerbos/.github/workflows/release.yaml@refs/tags/v0.52.0" \
+  ghcr.io/cerbos/cerbos:0.52.0
+```
+
+## Custom Configuration
+
+<Steps>
+
+<Step title="Create directory structure">
+Create a directory to hold your configuration and policies:
+
+```bash
+mkdir -p cerbos-quickstart/policies
+```
+</Step>
+
+<Step title="Create configuration file">
+Create a custom Cerbos configuration file:
+
+```bash
+cat > cerbos-quickstart/.cerbos.yaml <<EOF
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /quickstart/policies
+    watchForChanges: true
+EOF
+```
+</Step>
+
+<Step title="Launch container with custom config">
+Mount your directory and use the custom configuration:
+
+```bash
+docker run --rm --name cerbos -d \
+  -v $(pwd)/cerbos-quickstart:/quickstart \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  ghcr.io/cerbos/cerbos:latest server --config=/quickstart/.cerbos.yaml
+```
+</Step>
+
+</Steps>
+
+## Container Details
+
+The Cerbos container image is built on Alpine Linux and includes:
+
+- **Base Image**: `alpine:3.16` with CA certificates
+- **Exposed Ports**: 
+  - `3592` - HTTP API
+  - `3593` - gRPC API
+- **Volumes**: 
+  - `/policies` - Default policy directory
+  - `/tmp` - Temporary files
+  - `/.cache` - Cache directory
+- **Entrypoint**: `/cerbos`
+- **Default Command**: `server`
+- **Health Check**: Built-in healthcheck on `/cerbos healthcheck` endpoint
+
+## Environment Variables
+
+The container supports configuration via environment variables:
+
+```bash
+docker run --rm --name cerbos \
+  -e CERBOS_CONFIG="__default__" \
+  -p 3592:3592 \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+Set `CERBOS_NO_TELEMETRY=1` to disable telemetry collection.
+
+## Running with Docker Compose
+
+Create a `docker-compose.yml` file:
+
+```yaml
+version: '3.8'
+
+services:
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:latest
+    container_name: cerbos
+    ports:
+      - "3592:3592"
+      - "3593:3593"
+    volumes:
+      - ./policies:/policies:ro
+      - ./config/.cerbos.yaml:/config/.cerbos.yaml:ro
+    command: server --config=/config/.cerbos.yaml
+    restart: unless-stopped
+    healthcheck:
+      test: ["/cerbos", "healthcheck"]
+      interval: 10s
+      timeout: 2s
+      retries: 2
+```
+
+Start the service:
+
+```bash
+docker-compose up -d
+```
+
+## Verifying the Installation
+
+Check that Cerbos is running:
+
+<CodeGroup>
+
+```bash Health Check
+curl http://localhost:3592/_cerbos/health
+```
+
+```bash Docker Logs
+docker logs cerbos
+```
+
+```bash Docker Stats
+docker stats cerbos
+```
+
+</CodeGroup>
+
+## Production Considerations
+
+- Use specific version tags instead of `latest`
+- Mount policy directories as read-only volumes
+- Configure appropriate resource limits
+- Enable TLS for production deployments
+- Use persistent volumes for policy storage
+- Set up proper logging and monitoring
+
+## Next Steps
+
+- Configure [storage backends](/configuration/storage) for policies
+- Set up [TLS encryption](/configuration/server) for secure communication
+- Explore [deployment patterns](/deployment/kubernetes) for different environments
+- Review [configuration options](/configuration/server) for production use

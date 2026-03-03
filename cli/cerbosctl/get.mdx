@@ -1,0 +1,296 @@
+---
+title: "cerbosctl get"
+description: "Retrieve and list policies and schemas from the Cerbos server"
+---
+
+## Overview
+
+The `get` command retrieves policies and schemas from a Cerbos server. It supports listing multiple policies with filtering and sorting, or retrieving individual policy definitions in various formats.
+
+## Syntax
+
+```bash
+cerbosctl get <subcommand> [id...] [flags]
+```
+
+## Subcommands
+
+### Resource Policies
+
+Retrieve resource policies that define permissions for resources.
+
+**Aliases:** `resource_policies`, `resource_policy`, `rp`
+
+```bash
+cerbosctl get resource_policies [id...] [flags]
+```
+
+#### Examples
+
+<Steps>
+
+<Step title="List all resource policies">
+
+```bash
+cerbosctl get resource_policies
+```
+
+Displays a table of all resource policies with their policy IDs, names, and versions.
+
+</Step>
+
+<Step title="Filter policies by name">
+
+```bash
+cerbosctl get resource_policies --name leave_request
+```
+
+Shows only resource policies matching the name "leave_request".
+
+</Step>
+
+<Step title="Sort policies by column">
+
+```bash
+cerbosctl get resource_policies --sort-by policyId
+cerbosctl get resource_policies --sort-by name
+cerbosctl get resource_policies --sort-by version
+```
+
+Sort the output table by different columns.
+
+</Step>
+
+<Step title="Get specific policy definition">
+
+```bash
+# For disk, git, or blob stores
+cerbosctl get resource_policies leave_request.yaml
+
+# For mutable stores (using policy ID)
+cerbosctl get resource_policies resource.leave_request.default
+```
+
+Retrieve the full definition of a specific resource policy.
+
+</Step>
+
+<Step title="Get policy in different formats">
+
+```bash
+# YAML format
+cerbosctl get resource_policies resource.leave_request.default -oyaml
+
+# JSON format
+cerbosctl get resource_policies resource.leave_request.default -ojson
+
+# Pretty JSON format
+cerbosctl get resource_policies resource.leave_request.default -oprettyjson
+```
+
+</Step>
+
+</Steps>
+
+### Principal Policies
+
+Retrieve principal policies that define permissions for specific users or roles.
+
+**Aliases:** `principal_policies`, `principal_policy`, `pp`
+
+```bash
+cerbosctl get principal_policies [id...] [flags]
+```
+
+#### Examples
+
+```bash
+# List all principal policies
+cerbosctl get principal_policies
+
+# Filter by name
+cerbosctl get principal_policies --name donald_duck
+
+# Get specific policy
+cerbosctl get principal_policies principal.donald_duck.default
+
+# Get policy as YAML
+cerbosctl get principal_policies principal.donald_duck.default -oyaml
+```
+
+### Derived Roles
+
+Retrieve derived roles that define dynamic role assignments based on conditions.
+
+**Aliases:** `derived_roles`, `derived_role`, `dr`
+
+```bash
+cerbosctl get derived_roles [id...] [flags]
+```
+
+#### Examples
+
+```bash
+# List all derived roles
+cerbosctl get derived_roles
+
+# Filter by name
+cerbosctl get derived_roles --name my_derived_roles
+
+# Include disabled policies
+cerbosctl get derived_roles --include-disabled
+
+# Get specific derived role
+cerbosctl get derived_roles derived_roles.my_derived_roles
+
+# Get as JSON
+cerbosctl get derived_roles derived_roles.my_derived_roles -ojson
+```
+
+### Schemas
+
+Retrieve JSON schemas used for validating principal and resource attributes.
+
+**Aliases:** `schemas`, `schema`, `s`
+
+```bash
+cerbosctl get schemas [id...] [flags]
+```
+
+#### Examples
+
+```bash
+# List all schemas
+cerbosctl get schemas
+
+# Get specific schema
+cerbosctl get schemas principal.json
+```
+
+### Export Variables
+
+Retrieve exported variable definitions.
+
+**Aliases:** `export_variables`, `ev`
+
+```bash
+cerbosctl get export_variables [id...] [flags]
+```
+
+### Export Constants
+
+Retrieve exported constant definitions.
+
+**Aliases:** `export_constants`, `ec`
+
+```bash
+cerbosctl get export_constants [id...] [flags]
+```
+
+### Role Policies
+
+Retrieve role policies that define role-based permissions.
+
+**Aliases:** `role_policies`, `role_policy`, `rlp`
+
+```bash
+cerbosctl get role_policies [id...] [flags]
+```
+
+## Common Flags
+
+### Filter Flags
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | Filter policies by name (can be specified multiple times) |
+| `--name-regexp <pattern>` | Filter policies by name using regular expression |
+| `--version <version>` | Filter policies by version (can be specified multiple times) |
+| `--version-regexp <pattern>` | Filter policies by version using regular expression |
+| `--scope-regexp <pattern>` | Filter policies by scope using regular expression (not available for derived roles) |
+| `--include-disabled` | Include disabled policies in results |
+
+### Format Flags
+
+| Flag | Description | Values |
+|------|-------------|--------|
+| `-o, --output <format>` | Output format (only when retrieving specific policies) | `json`, `yaml`, `prettyjson` |
+| `--no-headers` | Do not output headers (only when listing) | - |
+
+### Sort Flags
+
+| Flag | Description | Values |
+|------|-------------|--------|
+| `--sort-by <column>` | Sort output by column | `policyId`, `name`, `version` |
+
+<Note>
+The `--output` flag is only available when retrieving a specific policy by ID. When listing policies, the output is always in table format.
+</Note>
+
+<Note>
+Filters like `--name`, `--version`, and `--sort-by` are only available when listing policies, not when retrieving specific policies by ID.
+</Note>
+
+## Output Examples
+
+### Listing Format
+
+When listing policies without specifying IDs, the output is a table:
+
+```
+POLICY ID                              NAME             VERSION
+resource.leave_request.default         leave_request    default
+resource.expense_report.default        expense_report   default
+principal.donald_duck.default          donald_duck      default
+```
+
+### Policy Definition Format
+
+When retrieving a specific policy with `-oyaml`:
+
+```yaml
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: leave_request
+  version: default
+  rules:
+    - actions: ['approve', 'defer']
+      effect: EFFECT_ALLOW
+      roles:
+        - manager
+```
+
+## Advanced Usage
+
+### Combining Filters
+
+You can combine multiple filters to narrow down results:
+
+```bash
+cerbosctl get resource_policies \
+  --name leave_request \
+  --version default \
+  --sort-by name
+```
+
+### Using Regular Expressions
+
+Filter using regex patterns for more flexible matching:
+
+```bash
+# Get all policies with names starting with "leave"
+cerbosctl get resource_policies --name-regexp "^leave.*"
+
+# Get all policies with version matching pattern
+cerbosctl get resource_policies --version-regexp "v[0-9]+"
+```
+
+### Including Disabled Policies
+
+By default, disabled policies are excluded from results. Include them with:
+
+```bash
+cerbosctl get resource_policies --include-disabled
+cerbosctl get principal_policies --include-disabled
+cerbosctl get derived_roles --include-disabled
+```

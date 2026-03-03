@@ -1,0 +1,504 @@
+---
+title: Audit Logging Configuration
+description: Configure audit logging backends including file, local database, Cerbos Hub, and Kafka for tracking access decisions and API calls
+---
+
+Cerbos audit logging captures detailed records of authorization decisions and API access for compliance, debugging, and analytics.
+
+## Overview
+
+Audit logs provide visibility into:
+- **Access Logs**: API requests and responses
+- **Decision Logs**: Policy evaluation results for CheckResources and PlanResources calls
+
+Supported backends:
+- `file`: Write logs to local files with rotation
+- `local`: Store logs in embedded BadgerDB database
+- `hub`: Send logs to Cerbos Hub
+- `kafka`: Stream logs to Kafka topics
+
+## Basic Configuration
+
+<ParamField path="audit.enabled" type="boolean" default="false">
+  Enable or disable audit logging globally.
+</ParamField>
+
+<ParamField path="audit.backend" type="string" default="local">
+  Audit backend to use: `file`, `local`, `hub`, or `kafka`.
+</ParamField>
+
+<ParamField path="audit.accessLogsEnabled" type="boolean" default="true">
+  Enable logging of API access events.
+</ParamField>
+
+<ParamField path="audit.decisionLogsEnabled" type="boolean" default="true">
+  Enable logging of policy decision events.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  backend: file
+  accessLogsEnabled: true
+  decisionLogsEnabled: true
+```
+
+## Metadata Filtering
+
+Control which gRPC metadata (headers) are included in audit logs.
+
+<ParamField path="audit.includeMetadataKeys" type="string[]">
+  List of metadata keys to include in logs. If empty, all metadata is included.
+</ParamField>
+
+<ParamField path="audit.excludeMetadataKeys" type="string[]">
+  List of metadata keys to exclude from logs. Takes precedence over `includeMetadataKeys`.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  includeMetadataKeys:
+    - "content-type"
+    - "user-agent"
+  excludeMetadataKeys:
+    - "authorization"
+    - "cookie"
+```
+
+<Warning>
+  Always exclude sensitive headers like `authorization` to prevent credential leakage in logs.
+</Warning>
+
+## Decision Log Filters
+
+Reduce log volume by filtering decision logs based on outcomes.
+
+### CheckResources Filters
+
+<ParamField path="audit.decisionLogFilters.checkResources.ignoreAllowAll" type="boolean" default="false">
+  Ignore decisions where all actions are allowed (no EFFECT_DENY).
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  decisionLogFilters:
+    checkResources:
+      ignoreAllowAll: true  # Only log denials
+```
+
+### PlanResources Filters
+
+<ParamField path="audit.decisionLogFilters.planResources.ignoreAll" type="boolean" default="false">
+  Ignore all plan responses. Takes precedence over other filters.
+</ParamField>
+
+<ParamField path="audit.decisionLogFilters.planResources.ignoreAlwaysAllow" type="boolean" default="false">
+  Ignore ALWAYS_ALLOWED plan responses.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  decisionLogFilters:
+    planResources:
+      ignoreAlwaysAllow: true  # Only log conditional or denied plans
+```
+
+## File Backend
+
+Write audit logs to local files with automatic rotation.
+
+<ParamField path="audit.file.path" type="string" required default="stdout">
+  Path to the log file. Special values: `stdout`, `stderr`.
+</ParamField>
+
+<ParamField path="audit.file.additionalPaths" type="string[]">
+  Additional paths to mirror log output. Use with caution due to performance impact.
+</ParamField>
+
+### Log Rotation
+
+<ParamField path="audit.file.logRotation.maxFileSizeMB" type="integer">
+  Maximum size of individual log files in megabytes before rotation.
+</ParamField>
+
+<ParamField path="audit.file.logRotation.maxFileAgeDays" type="integer">
+  Maximum age in days of old log files before deletion.
+</ParamField>
+
+<ParamField path="audit.file.logRotation.maxFileCount" type="integer">
+  Maximum number of rotated files to retain.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  backend: file
+  file:
+    path: /var/log/cerbos/audit.log
+    logRotation:
+      maxFileSizeMB: 100
+      maxFileAgeDays: 30
+      maxFileCount: 10
+```
+
+### Writing to stdout
+
+```yaml
+audit:
+  enabled: true
+  backend: file
+  file:
+    path: stdout
+```
+
+<Note>
+  Writing to stdout is useful for container environments where logs are collected by external systems.
+</Note>
+
+## Local Backend
+
+Store audit logs in an embedded BadgerDB database for querying via Admin API.
+
+<ParamField path="audit.local.storagePath" type="string" required>
+  Directory path to store the BadgerDB database.
+</ParamField>
+
+<ParamField path="audit.local.retentionPeriod" type="duration" default="168h">
+  How long to retain audit records. Min: `1h`, Max: `720h` (30 days).
+</ParamField>
+
+### Advanced Settings
+
+<ParamField path="audit.local.advanced.bufferSize" type="integer" default="16">
+  Number of records to buffer before writing.
+</ParamField>
+
+<ParamField path="audit.local.advanced.maxBatchSize" type="integer" default="16">
+  Maximum number of records to write in a single batch.
+</ParamField>
+
+<ParamField path="audit.local.advanced.flushInterval" type="duration" default="30s">
+  Interval to flush buffered records. Min: `1s`.
+</ParamField>
+
+<ParamField path="audit.local.advanced.gcInterval" type="duration" default="15m">
+  Interval to run garbage collection for expired records.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  backend: local
+  local:
+    storagePath: /var/cerbos/audit
+    retentionPeriod: 168h  # 7 days
+    advanced:
+      bufferSize: 256
+      maxBatchSize: 32
+      flushInterval: 10s
+      gcInterval: 30m
+```
+
+<Note>
+  Local backend enables querying audit logs via the Admin API's audit log endpoints.
+</Note>
+
+## Cerbos Hub Backend
+
+Send audit logs to Cerbos Hub for centralized management and analytics.
+
+<ParamField path="audit.hub.storagePath" type="string" required>
+  Local storage path for buffering logs before sending to Hub.
+</ParamField>
+
+<ParamField path="audit.hub.retentionPeriod" type="duration" default="168h">
+  How long to retain logs locally before deletion.
+</ParamField>
+
+### Masking Sensitive Data
+
+<ParamField path="audit.hub.mask.peer" type="string[]">
+  JSONPath expressions to mask in peer information.
+</ParamField>
+
+<ParamField path="audit.hub.mask.metadata" type="string[]">
+  Metadata keys to mask.
+</ParamField>
+
+<ParamField path="audit.hub.mask.checkResources" type="string[]">
+  JSONPath expressions to mask in CheckResources logs.
+</ParamField>
+
+<ParamField path="audit.hub.mask.planResources" type="string[]">
+  JSONPath expressions to mask in PlanResources logs.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  backend: hub
+  hub:
+    storagePath: /var/cerbos/audit
+    retentionPeriod: 168h
+    mask:
+      peer:
+        - address
+        - forwarded_for
+      metadata:
+        - authorization
+      checkResources:
+        - inputs[*].principal.attr.ssn
+        - inputs[*].auxData
+      planResources:
+        - input.principal.attr.secretKey
+```
+
+### Ingest Configuration
+
+<ParamField path="audit.hub.ingest.minFlushInterval" type="duration" default="5s">
+  Minimum duration between Hub ingest requests. Min: `2s`.
+</ParamField>
+
+<ParamField path="audit.hub.ingest.flushTimeout" type="duration" default="5s">
+  Maximum timeout for each ingest request. Max: `10s`.
+</ParamField>
+
+<ParamField path="audit.hub.ingest.numGoRoutines" type="integer" default="4">
+  Number of goroutines for streaming logs from local DB.
+</ParamField>
+
+<ParamField path="audit.hub.ingest.maxBatchSizeBytes" type="integer" default="4194304">
+  Maximum cumulative size in bytes for a batch of log entries (4MB).
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  backend: hub
+  hub:
+    storagePath: /var/cerbos/audit
+    ingest:
+      minFlushInterval: 3s
+      flushTimeout: 5s
+      numGoRoutines: 8
+      maxBatchSizeBytes: 2097152  # 2MB
+```
+
+### Pipe Output
+
+<ParamField path="audit.hub.pipeOutput.enabled" type="boolean" default="false">
+  Enable piping logs to another backend in addition to Hub.
+</ParamField>
+
+<ParamField path="audit.hub.pipeOutput.backend" type="string">
+  Additional backend to send logs to: `file`, `local`, or `kafka`.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  backend: hub
+  hub:
+    storagePath: /var/cerbos/audit
+    pipeOutput:
+      enabled: true
+      backend: file
+  file:
+    path: /var/log/cerbos/audit.log
+```
+
+## Kafka Backend
+
+Stream audit logs to Kafka topics for real-time processing.
+
+<ParamField path="audit.kafka.brokers" type="string[]" required>
+  List of Kafka broker addresses.
+</ParamField>
+
+<ParamField path="audit.kafka.topic" type="string" required>
+  Kafka topic to write audit entries to.
+</ParamField>
+
+<ParamField path="audit.kafka.encoding" type="string" default="json">
+  Encoding format: `json` or `protobuf`.
+</ParamField>
+
+<ParamField path="audit.kafka.ack" type="string" default="all">
+  Acknowledgment mode: `none`, `leader`, or `all`. Idempotency disabled when not `all`.
+</ParamField>
+
+<ParamField path="audit.kafka.clientID" type="string" default="cerbos">
+  Client ID reported in Kafka connections.
+</ParamField>
+
+<ParamField path="audit.kafka.compression" type="string[]" default="['snappy', 'none']">
+  Compression algorithms in priority order: `none`, `gzip`, `snappy`, `lz4`, `zstd`.
+</ParamField>
+
+<ParamField path="audit.kafka.closeTimeout" type="duration" default="30s">
+  Timeout when closing client to flush remaining messages.
+</ParamField>
+
+<ParamField path="audit.kafka.maxBufferedRecords" type="integer" default="250">
+  Maximum records to buffer in memory in async mode.
+</ParamField>
+
+<ParamField path="audit.kafka.produceSync" type="boolean" default="false">
+  Force synchronous message production. Significant performance impact.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  backend: kafka
+  kafka:
+    brokers:
+      - kafka-1.internal:9092
+      - kafka-2.internal:9092
+      - kafka-3.internal:9092
+    topic: cerbos.audit.log
+    encoding: json
+    ack: all
+    clientID: cerbos-prod
+    compression:
+      - snappy
+      - lz4
+    closeTimeout: 30s
+    maxBufferedRecords: 1000
+    produceSync: false
+```
+
+### TLS Authentication
+
+<ParamField path="audit.kafka.authentication.tls.caPath" type="string" required>
+  Path to CA certificate for verifying broker certificates.
+</ParamField>
+
+<ParamField path="audit.kafka.authentication.tls.certPath" type="string">
+  Path to client certificate for mutual TLS.
+</ParamField>
+
+<ParamField path="audit.kafka.authentication.tls.keyPath" type="string">
+  Path to client private key for mutual TLS.
+</ParamField>
+
+<ParamField path="audit.kafka.authentication.tls.reloadInterval" type="duration" default="0s">
+  Interval to reload TLS certificates. Set to `0` to disable.
+</ParamField>
+
+<ParamField path="audit.kafka.authentication.tls.insecureSkipVerify" type="boolean" default="false">
+  Skip verification of server certificate chain and hostname.
+</ParamField>
+
+```yaml
+audit:
+  enabled: true
+  backend: kafka
+  kafka:
+    brokers:
+      - kafka.internal:9093
+    topic: cerbos.audit.log
+    authentication:
+      tls:
+        caPath: /etc/cerbos/kafka/ca.crt
+        certPath: /etc/cerbos/kafka/client.crt
+        keyPath: /etc/cerbos/kafka/client.key
+        reloadInterval: 5m
+```
+
+<Warning>
+  Never set `insecureSkipVerify: true` in production. This disables critical security checks.
+</Warning>
+
+## Complete Examples
+
+### Production File Logging
+
+```yaml
+audit:
+  enabled: true
+  backend: file
+  accessLogsEnabled: true
+  decisionLogsEnabled: true
+  excludeMetadataKeys:
+    - authorization
+    - cookie
+  decisionLogFilters:
+    checkResources:
+      ignoreAllowAll: false
+  file:
+    path: /var/log/cerbos/audit.log
+    logRotation:
+      maxFileSizeMB: 500
+      maxFileAgeDays: 90
+      maxFileCount: 30
+```
+
+### Production Local Database
+
+```yaml
+audit:
+  enabled: true
+  backend: local
+  accessLogsEnabled: true
+  decisionLogsEnabled: true
+  excludeMetadataKeys:
+    - authorization
+  local:
+    storagePath: /var/cerbos/audit
+    retentionPeriod: 720h  # 30 days
+    advanced:
+      bufferSize: 512
+      maxBatchSize: 64
+      flushInterval: 5s
+      gcInterval: 60m
+```
+
+### Production Kafka Streaming
+
+```yaml
+audit:
+  enabled: true
+  backend: kafka
+  accessLogsEnabled: true
+  decisionLogsEnabled: true
+  excludeMetadataKeys:
+    - authorization
+    - cookie
+  decisionLogFilters:
+    checkResources:
+      ignoreAllowAll: true
+  kafka:
+    brokers:
+      - kafka-1.prod:9093
+      - kafka-2.prod:9093
+      - kafka-3.prod:9093
+    topic: cerbos.audit.production
+    encoding: protobuf
+    ack: all
+    clientID: cerbos-prod-cluster
+    compression:
+      - zstd
+      - snappy
+    maxBufferedRecords: 2000
+    authentication:
+      tls:
+        caPath: /etc/cerbos/kafka/ca.crt
+        certPath: /etc/cerbos/kafka/client.crt
+        keyPath: /etc/cerbos/kafka/client.key
+```
+
+### Development Configuration
+
+```yaml
+audit:
+  enabled: true
+  backend: file
+  accessLogsEnabled: true
+  decisionLogsEnabled: true
+  file:
+    path: stdout
+```

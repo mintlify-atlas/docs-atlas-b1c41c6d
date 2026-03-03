@@ -1,0 +1,660 @@
+---
+title: "Systemd Service Deployment"
+description: "Deploy Cerbos as a systemd service on Linux systems"
+---
+
+Cerbos can be deployed as a systemd service for production Linux environments, providing automatic startup, restart on failure, and system integration.
+
+## Prerequisites
+
+- Linux system with systemd (systemd version 232 or higher recommended)
+- Cerbos binary installed
+- Root or sudo access for service installation
+
+## Installation
+
+<Steps>
+
+### Download Cerbos binary
+
+```bash
+# Download latest release
+curl -L https://github.com/cerbos/cerbos/releases/latest/download/cerbos_Linux_x86_64.tar.gz | \
+  sudo tar xz -C /usr/local/bin cerbos
+
+# Make executable
+sudo chmod +x /usr/local/bin/cerbos
+
+# Verify installation
+cerbos version
+```
+
+### Create configuration directory
+
+```bash
+sudo mkdir -p /etc/cerbos
+sudo mkdir -p /var/cerbos/policies
+```
+
+### Create configuration file
+
+Create `/etc/cerbos.yaml`:
+
+```yaml
+---
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+engine:
+  defaultPolicyVersion: "default"
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /var/cerbos/policies
+    watchForChanges: true
+```
+
+### Install systemd service
+
+Create `/etc/systemd/system/cerbos.service`:
+
+```ini
+[Unit]
+Description=Cerbos Policy Decision Point
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cerbos server --config=/etc/cerbos.yaml
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+ProtectSystem=full
+ProtectHome=true
+PrivateUsers=true
+PrivateTmp=true
+DynamicUser=yes
+
+# Working directory
+WorkingDirectory=/var/cerbos
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cerbos
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Reload systemd and start service
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable cerbos
+sudo systemctl start cerbos
+```
+
+### Verify service status
+
+```bash
+sudo systemctl status cerbos
+```
+
+</Steps>
+
+## Service Management
+
+### Basic Commands
+
+<CodeGroup>
+
+```bash Start Service
+sudo systemctl start cerbos
+```
+
+```bash Stop Service
+sudo systemctl stop cerbos
+```
+
+```bash Restart Service
+sudo systemctl restart cerbos
+```
+
+```bash Reload Configuration
+sudo systemctl reload cerbos
+```
+
+```bash Service Status
+sudo systemctl status cerbos
+```
+
+```bash Enable Auto-start
+sudo systemctl enable cerbos
+```
+
+```bash Disable Auto-start
+sudo systemctl disable cerbos
+```
+
+</CodeGroup>
+
+### View Logs
+
+<CodeGroup>
+
+```bash Recent Logs
+sudo journalctl -u cerbos -n 100
+```
+
+```bash Follow Logs
+sudo journalctl -u cerbos -f
+```
+
+```bash Logs Since Boot
+sudo journalctl -u cerbos -b
+```
+
+```bash Logs by Time Range
+sudo journalctl -u cerbos --since "2024-01-01" --until "2024-01-02"
+```
+
+</CodeGroup>
+
+## Configuration
+
+### Server Configuration
+
+The default configuration file at `/etc/cerbos.yaml`:
+
+```yaml
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+  
+  # Optional: Enable TLS
+  tls:
+    cert: /etc/cerbos/tls/server.crt
+    key: /etc/cerbos/tls/server.key
+    caCert: /etc/cerbos/tls/ca.crt
+  
+  # Optional: Request limits
+  requestLimits:
+    maxActionsPerResource: 50
+    maxResourcesPerRequest: 50
+
+engine:
+  defaultPolicyVersion: "default"
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /var/cerbos/policies
+    watchForChanges: true
+```
+
+### Storage Backends
+
+<CodeGroup>
+
+```yaml Disk Storage
+storage:
+  driver: "disk"
+  disk:
+    directory: /var/cerbos/policies
+    watchForChanges: true
+```
+
+```yaml Git Storage
+storage:
+  driver: "git"
+  git:
+    protocol: https
+    url: https://github.com/org/policies.git
+    branch: main
+    checkoutDir: /var/cerbos/work
+    updatePollInterval: 60s
+    https:
+      username: ${GITHUB_TOKEN}
+      password: ""
+```
+
+```yaml Cerbos Hub
+storage:
+  driver: "hub"
+  hub:
+    remote:
+      deploymentID: "${CERBOS_HUB_DEPLOYMENT_ID}"
+```
+
+</CodeGroup>
+
+### Environment Variables
+
+Add environment variables to the service:
+
+```ini
+[Service]
+Environment="CERBOS_LOG_LEVEL=info"
+Environment="GITHUB_TOKEN=ghp_xxxxxxxxxxxx"
+EnvironmentFile=/etc/cerbos/environment
+```
+
+Create `/etc/cerbos/environment`:
+
+```bash
+CERBOS_LOG_LEVEL=info
+CERBOS_HUB_CLIENT_ID=client_id
+CERBOS_HUB_CLIENT_SECRET=client_secret
+CERBOS_HUB_DEPLOYMENT_ID=deployment_id
+```
+
+<Warning>
+Ensure environment files with secrets have restricted permissions:
+```bash
+sudo chmod 600 /etc/cerbos/environment
+```
+</Warning>
+
+## Security Hardening
+
+### Enhanced Service Configuration
+
+A production-hardened systemd service:
+
+```ini
+[Unit]
+Description=Cerbos Policy Decision Point
+Documentation=https://docs.cerbos.dev
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cerbos server --config=/etc/cerbos.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# User and group
+User=cerbos
+Group=cerbos
+
+# Working directory
+WorkingDirectory=/var/cerbos
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cerbos
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/cerbos
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=512
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Create Dedicated User
+
+```bash
+# Create system user
+sudo useradd -r -s /bin/false -d /var/cerbos -c "Cerbos Service User" cerbos
+
+# Set ownership
+sudo chown -R cerbos:cerbos /var/cerbos
+sudo chown -R cerbos:cerbos /etc/cerbos
+```
+
+Update the service file to use the dedicated user:
+
+```ini
+[Service]
+User=cerbos
+Group=cerbos
+DynamicUser=no
+```
+
+### File Permissions
+
+```bash
+# Configuration files
+sudo chmod 644 /etc/cerbos.yaml
+sudo chmod 600 /etc/cerbos/environment
+
+# Policy directory
+sudo chmod 755 /var/cerbos/policies
+sudo chmod 644 /var/cerbos/policies/*.yaml
+
+# TLS certificates
+sudo chmod 600 /etc/cerbos/tls/*.key
+sudo chmod 644 /etc/cerbos/tls/*.crt
+```
+
+## Health Checks
+
+### Manual Health Check
+
+```bash
+curl http://localhost:3592/_cerbos/health
+```
+
+Expected response:
+```json
+{"status":"SERVING"}
+```
+
+### Systemd Health Check
+
+Add a health check to the service:
+
+```ini
+[Service]
+ExecStartPost=/bin/sh -c 'until curl -sf http://localhost:3592/_cerbos/health; do sleep 1; done'
+```
+
+### External Monitoring
+
+Create a separate systemd timer for health checks:
+
+`/etc/systemd/system/cerbos-health.service`:
+```ini
+[Unit]
+Description=Cerbos Health Check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cerbos-health-check.sh
+```
+
+`/etc/systemd/system/cerbos-health.timer`:
+```ini
+[Unit]
+Description=Cerbos Health Check Timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+```
+
+## TLS Configuration
+
+<Steps>
+
+### Generate TLS certificates
+
+```bash
+sudo mkdir -p /etc/cerbos/tls
+
+# Generate CA key and certificate
+openssl genrsa -out /etc/cerbos/tls/ca.key 4096
+openssl req -new -x509 -days 365 -key /etc/cerbos/tls/ca.key \
+  -out /etc/cerbos/tls/ca.crt
+
+# Generate server key and certificate
+openssl genrsa -out /etc/cerbos/tls/server.key 4096
+openssl req -new -key /etc/cerbos/tls/server.key \
+  -out /etc/cerbos/tls/server.csr
+openssl x509 -req -days 365 -in /etc/cerbos/tls/server.csr \
+  -CA /etc/cerbos/tls/ca.crt -CAkey /etc/cerbos/tls/ca.key \
+  -CAcreateserial -out /etc/cerbos/tls/server.crt
+```
+
+### Update configuration
+
+Edit `/etc/cerbos.yaml`:
+
+```yaml
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+  tls:
+    cert: /etc/cerbos/tls/server.crt
+    key: /etc/cerbos/tls/server.key
+    caCert: /etc/cerbos/tls/ca.crt
+```
+
+### Restart service
+
+```bash
+sudo systemctl restart cerbos
+```
+
+### Test TLS connection
+
+```bash
+curl --cacert /etc/cerbos/tls/ca.crt https://localhost:3592/_cerbos/health
+```
+
+</Steps>
+
+## Audit Logging
+
+Enable audit logging to track all policy decisions:
+
+```yaml
+audit:
+  enabled: true
+  backend: "file"
+  file:
+    path: /var/log/cerbos/audit.log
+    retentionPeriod: 168h  # 7 days
+```
+
+Create log directory:
+
+```bash
+sudo mkdir -p /var/log/cerbos
+sudo chown cerbos:cerbos /var/log/cerbos
+```
+
+Configure log rotation in `/etc/logrotate.d/cerbos`:
+
+```
+/var/log/cerbos/audit.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 cerbos cerbos
+    postrotate
+        systemctl reload cerbos
+    endscript
+}
+```
+
+## Firewall Configuration
+
+### UFW (Ubuntu/Debian)
+
+```bash
+sudo ufw allow 3592/tcp comment 'Cerbos HTTP'
+sudo ufw allow 3593/tcp comment 'Cerbos gRPC'
+sudo ufw reload
+```
+
+### firewalld (RHEL/CentOS)
+
+```bash
+sudo firewall-cmd --permanent --add-port=3592/tcp
+sudo firewall-cmd --permanent --add-port=3593/tcp
+sudo firewall-cmd --reload
+```
+
+## Backup and Recovery
+
+### Backup Configuration
+
+```bash
+#!/bin/bash
+# /usr/local/bin/backup-cerbos.sh
+
+BACKUP_DIR="/backup/cerbos/$(date +%Y%m%d)"
+mkdir -p "$BACKUP_DIR"
+
+# Backup configuration
+cp -r /etc/cerbos.yaml "$BACKUP_DIR/"
+cp -r /etc/cerbos/ "$BACKUP_DIR/config/"
+
+# Backup policies
+cp -r /var/cerbos/policies "$BACKUP_DIR/"
+
+# Backup logs
+cp -r /var/log/cerbos "$BACKUP_DIR/"
+
+echo "Backup completed: $BACKUP_DIR"
+```
+
+### Restore Configuration
+
+```bash
+# Stop service
+sudo systemctl stop cerbos
+
+# Restore files
+sudo cp backup/cerbos.yaml /etc/cerbos.yaml
+sudo cp -r backup/policies/* /var/cerbos/policies/
+
+# Set permissions
+sudo chown -R cerbos:cerbos /var/cerbos/policies
+
+# Start service
+sudo systemctl start cerbos
+```
+
+## Troubleshooting
+
+### Service Won't Start
+
+```bash
+# Check service status
+sudo systemctl status cerbos
+
+# View detailed logs
+sudo journalctl -xeu cerbos
+
+# Verify configuration
+sudo cerbos validate /etc/cerbos.yaml
+
+# Check binary
+which cerbos
+cerbos version
+```
+
+### Permission Errors
+
+```bash
+# Check file ownership
+ls -la /etc/cerbos.yaml
+ls -la /var/cerbos/
+
+# Fix permissions
+sudo chown -R cerbos:cerbos /var/cerbos
+sudo chmod 755 /var/cerbos
+```
+
+### Port Already in Use
+
+```bash
+# Check what's using the port
+sudo netstat -tlnp | grep 3592
+sudo lsof -i :3592
+
+# Change port in configuration
+sudo nano /etc/cerbos.yaml
+```
+
+### High Memory Usage
+
+```bash
+# Check memory usage
+systemctl status cerbos
+
+# Add memory limits to service
+sudo systemctl edit cerbos
+```
+
+Add:
+```ini
+[Service]
+MemoryMax=512M
+MemoryHigh=384M
+```
+
+## Complete Production Example
+
+A complete production configuration:
+
+`/etc/cerbos.yaml`:
+```yaml
+---
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+  tls:
+    cert: /etc/cerbos/tls/server.crt
+    key: /etc/cerbos/tls/server.key
+    caCert: /etc/cerbos/tls/ca.crt
+  requestLimits:
+    maxActionsPerResource: 50
+    maxResourcesPerRequest: 50
+
+engine:
+  defaultPolicyVersion: "default"
+
+storage:
+  driver: "git"
+  git:
+    protocol: https
+    url: https://github.com/org/policies.git
+    branch: production
+    checkoutDir: /var/cerbos/work
+    updatePollInterval: 60s
+    https:
+      username: ${GITHUB_TOKEN}
+      password: ""
+
+audit:
+  enabled: true
+  backend: "file"
+  file:
+    path: /var/log/cerbos/audit.log
+    retentionPeriod: 168h
+
+telemetry:
+  enabled: true
+  backend: "prometheus"
+```
+
+This provides a secure, production-ready Cerbos deployment as a systemd service.

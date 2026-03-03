@@ -1,0 +1,413 @@
+---
+title: "cerbosctl audit"
+description: "View and filter access and decision logs from Cerbos audit logs"
+---
+
+## Overview
+
+The `audit` command retrieves and displays audit logs from a Cerbos server. It supports both access logs and decision logs, with flexible filtering options and output formats.
+
+<Note>
+Audit logging must be enabled on the Cerbos server for this command to work. The server must be configured to capture the type of logs you want to view (access or decision).
+</Note>
+
+## Syntax
+
+```bash
+cerbosctl audit [flags]
+```
+
+## Log Types
+
+The `--kind` flag specifies which type of audit log to view:
+
+- **access**: Access logs showing API calls and metadata (default)
+- **decision**: Decision logs with detailed authorization results
+
+## Usage Examples
+
+<Steps>
+
+<Step title="View the last 10 access logs">
+
+```bash
+cerbosctl audit --kind=access --tail=10
+```
+
+Displays the 10 most recent access log entries.
+
+</Step>
+
+<Step title="View decision logs from a time range">
+
+```bash
+cerbosctl audit --kind=decision \
+  --between=2021-07-01T00:00:00Z,2021-07-02T00:00:00Z
+```
+
+Shows decision logs captured between midnight July 1, 2021 and midnight July 2, 2021.
+
+</Step>
+
+<Step title="View logs from a start time to now">
+
+```bash
+cerbosctl audit --kind=decision --between=2021-07-01T00:00:00Z
+```
+
+Shows all decision logs from midnight July 1, 2021 to the current time.
+
+</Step>
+
+<Step title="View logs from the last N hours">
+
+```bash
+# Access logs from last 3 hours
+cerbosctl audit --kind=access --since=3h --raw
+
+# Decision logs from last 30 minutes
+cerbosctl audit --kind=decision --since=30m
+```
+
+Shows logs from N time units ago to now. Unit suffixes: `h`=hours, `m`=minutes, `s`=seconds.
+
+</Step>
+
+<Step title="Look up a specific log entry">
+
+```bash
+cerbosctl audit --kind=access --lookup=01F9Y5MFYTX7Y87A30CTJ2FB0S
+```
+
+Retrieves a specific log entry using its Cerbos Call ID.
+
+</Step>
+
+</Steps>
+
+## Flags
+
+### Required Flags
+
+| Flag | Description | Default | Values |
+|------|-------------|---------|--------|
+| `--kind` | Type of log entry | `access` | `access`, `decision` |
+
+### Filter Flags
+
+Only one filter can be used at a time:
+
+| Flag | Description | Example |
+|------|-------------|----------|
+| `--tail <n>` | View the last N records | `--tail=50` |
+| `--between <time1>[,<time2>]` | View records between timestamps (ISO-8601 format) | `--between=2021-07-01T00:00:00Z,2021-07-02T00:00:00Z` |
+| `--since <duration>` | View records from X ago to now (h=hours, m=minutes, s=seconds) | `--since=2h30m` |
+| `--lookup <call-id>` | View a specific record by Cerbos Call ID | `--lookup=01F9Y5MFYTX7Y87A30CTJ2FB0S` |
+
+<Note>
+If no filter is specified, the command defaults to `--tail=30` (showing the last 30 records).
+</Note>
+
+<Warning>
+You cannot combine multiple filters. Only one of `--tail`, `--between`, `--since`, or `--lookup` can be used per command.
+</Warning>
+
+### Output Flags
+
+| Flag | Description |
+|------|-------------|
+| `--raw` | Output newline-delimited JSON without formatting or colors |
+
+## Output Formats
+
+### Formatted Output (Default)
+
+By default, logs are displayed with:
+- Colored headers with Call IDs
+- Syntax-highlighted JSON
+- Organized by log entry
+
+```
+
+01ABCD1234567890 ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+{
+  "callId": "01ABCD1234567890",
+  "timestamp": "2021-07-01T10:30:00Z",
+  "peer": {
+    "address": "192.168.1.100",
+    "userAgent": "cerbos-sdk-go/0.1.0"
+  },
+  "method": "/cerbos.svc.v1.CerbosService/CheckResources"
+}
+
+
+01EFGH5678901234 ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+{
+  "callId": "01EFGH5678901234",
+  "timestamp": "2021-07-01T10:35:00Z",
+  ...
+}
+```
+
+### Raw Output
+
+With `--raw`, logs are output as newline-delimited JSON (NDJSON), suitable for piping to other tools:
+
+```bash
+cerbosctl audit --kind=decision --since=1h --raw | jq '.'
+```
+
+Each line is a complete JSON object:
+
+```json
+{"callId":"01ABCD...","timestamp":"2021-07-01T10:30:00Z","peer":{...},"checkResources":{...}}
+{"callId":"01EFGH...","timestamp":"2021-07-01T10:35:00Z","peer":{...},"planResources":{...}}
+```
+
+## Access Log Structure
+
+Access logs capture metadata about API calls:
+
+```json
+{
+  "callId": "01F9Y5MFYTX7Y87A30CTJ2FB0S",
+  "timestamp": "2021-07-01T10:30:00.123456Z",
+  "peer": {
+    "address": "192.168.1.100:54321",
+    "userAgent": "cerbos-sdk-go/0.1.0",
+    "forwardedFor": "203.0.113.42"
+  },
+  "method": "/cerbos.svc.v1.CerbosService/CheckResources",
+  "metadata": {
+    "content-type": "application/grpc"
+  }
+}
+```
+
+**Fields**:
+- `callId`: Unique identifier for the API call
+- `timestamp`: When the call was received
+- `peer.address`: Client IP address and port
+- `peer.userAgent`: Client SDK or application identifier
+- `peer.forwardedFor`: Original client IP if behind a proxy
+- `method`: gRPC method that was called
+- `metadata`: Request metadata/headers
+
+## Decision Log Structure
+
+Decision logs contain detailed authorization information:
+
+```json
+{
+  "callId": "01F9Y5MFYTX7Y87A30CTJ2FB0S",
+  "timestamp": "2021-07-01T10:30:00.123456Z",
+  "peer": {
+    "address": "192.168.1.100:54321",
+    "userAgent": "cerbos-sdk-go/0.1.0"
+  },
+  "checkResources": {
+    "inputs": [
+      {
+        "requestId": "test-request-1",
+        "principal": {
+          "id": "user123",
+          "roles": ["user"],
+          "attr": {...}
+        },
+        "resource": {
+          "kind": "document",
+          "id": "doc123",
+          "attr": {...}
+        },
+        "actions": ["view", "edit", "delete"]
+      }
+    ],
+    "outputs": [
+      {
+        "requestId": "test-request-1",
+        "resourceId": "doc123",
+        "actions": {
+          "view": {
+            "effect": "EFFECT_ALLOW",
+            "policy": "resource.document.v1"
+          },
+          "edit": {
+            "effect": "EFFECT_ALLOW",
+            "policy": "resource.document.v1"
+          },
+          "delete": {
+            "effect": "EFFECT_DENY",
+            "policy": "resource.document.v1"
+          }
+        },
+        "effectiveDerivedRoles": ["document_owner"]
+      }
+    ]
+  }
+}
+```
+
+**Key Fields**:
+- `checkResources`: Authorization check details
+- `planResources`: Query plan details (for PlanResources calls)
+- `inputs`: Request parameters (principals, resources, actions)
+- `outputs`: Authorization results for each input
+- `effectiveDerivedRoles`: Derived roles that applied
+
+## Common Use Cases
+
+### Audit Trail
+
+Capture all access logs for compliance:
+
+```bash
+cerbosctl audit --kind=access \
+  --between=2021-07-01T00:00:00Z,2021-08-01T00:00:00Z \
+  --raw > july-audit.ndjson
+```
+
+### Debug Authorization Issues
+
+Find recent authorization decisions:
+
+```bash
+cerbosctl audit --kind=decision --since=15m
+```
+
+### Monitor API Usage
+
+View recent API calls:
+
+```bash
+cerbosctl audit --kind=access --tail=100
+```
+
+### Export for Analysis
+
+Export logs in JSON format for analysis with other tools:
+
+```bash
+cerbosctl audit --kind=decision --since=24h --raw | \
+  jq 'select(.checkResources.outputs[0].actions.delete.effect == "EFFECT_DENY")'
+```
+
+This filters to show only decisions where the "delete" action was denied.
+
+### Investigate Specific Call
+
+When you have a Call ID from application logs:
+
+```bash
+cerbosctl audit --kind=decision --lookup=01F9Y5MFYTX7Y87A30CTJ2FB0S
+```
+
+## Advanced Filtering with jq
+
+Combine `--raw` output with `jq` for powerful filtering:
+
+### Find all denied actions
+
+```bash
+cerbosctl audit --kind=decision --since=1h --raw | \
+  jq 'select(.checkResources.outputs[].actions | to_entries[] | .value.effect == "EFFECT_DENY")'
+```
+
+### Extract specific fields
+
+```bash
+cerbosctl audit --kind=access --tail=50 --raw | \
+  jq '{callId, method, timestamp, address: .peer.address}'
+```
+
+### Count calls by method
+
+```bash
+cerbosctl audit --kind=access --since=1h --raw | \
+  jq -r '.method' | sort | uniq -c
+```
+
+### Find calls from specific IP
+
+```bash
+cerbosctl audit --kind=access --tail=1000 --raw | \
+  jq 'select(.peer.address | startswith("192.168.1"))'
+```
+
+## Time Formats
+
+The `--between` flag requires ISO-8601 formatted timestamps:
+
+```
+2021-07-01T00:00:00Z           # UTC
+2021-07-01T10:30:00+02:00      # With timezone offset  
+2021-07-01T10:30:00.123456Z    # With microseconds
+```
+
+## Performance Considerations
+
+- **Large Result Sets**: Fetching many records (e.g., `--tail=100000`) may take time and use significant memory
+- **Network Transfer**: Decision logs are larger than access logs due to detailed authorization data
+- **Time Ranges**: Narrow time ranges query faster than broad ranges
+- **Raw Output**: Using `--raw` is faster than formatted output for large datasets
+
+<Tip>
+For better performance with large datasets, use `--raw` output and process incrementally with streaming JSON tools.
+</Tip>
+
+## Troubleshooting
+
+### No logs returned
+
+**Problem**: The command returns no results.
+
+**Solutions**:
+- Verify audit logging is enabled on the Cerbos server
+- Check the correct log type: `--kind=access` or `--kind=decision`
+- Verify the server has captured logs in the specified time range
+- Try a wider time range or higher `--tail` value
+
+### Connection errors
+
+**Problem**: Cannot connect to the Cerbos server.
+
+**Solutions**:
+- Verify server address: `--server=localhost:3593`
+- Check authentication credentials (`--username`, `--password`)
+- Ensure Admin API is enabled on the server
+- Verify network connectivity and firewall rules
+
+### Invalid timestamp format
+
+**Problem**: Error about invalid timestamp.
+
+**Solutions**:
+- Use ISO-8601 format: `2021-07-01T00:00:00Z`
+- Include timezone (Z for UTC or offset like +02:00)
+- Ensure time format is exactly as specified
+
+### Memory issues
+
+**Problem**: Command uses too much memory or runs slowly.
+
+**Solutions**:
+- Reduce the number of records: use smaller `--tail` value
+- Use narrower time ranges with `--between` or `--since`
+- Use `--raw` output instead of formatted output
+- Process in smaller batches
+
+## Differences from decisions Command
+
+The `audit` command differs from [`decisions`](/cli/cerbosctl/decisions) in several ways:
+
+| Feature | `audit` | `decisions` |
+|---------|---------|-------------|
+| Output | Text/JSON | Interactive TUI |
+| Log Types | Access and Decision | Decision only |
+| Format Options | Formatted or raw | Interactive UI |
+| Piping | Supports piping | No piping |
+| Analysis | External tools (jq) | Built-in viewer |
+| Use Case | Export, scripting, automation | Interactive exploration |
+
+<Tip>
+Use `decisions` for interactive debugging and exploration. Use `audit` for exporting data, scripting, and automation.
+</Tip>

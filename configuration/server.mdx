@@ -1,0 +1,282 @@
+---
+title: Server Configuration
+description: Configure Cerbos server settings including HTTP/gRPC listeners, TLS, admin API, CORS, and request limits
+---
+
+The server configuration section defines how Cerbos listens for connections, handles authentication, and manages requests.
+
+## Basic Configuration
+
+<ParamField path="server.httpListenAddr" type="string" required default=":3592">
+  HTTP server listen address. Can be a TCP address (`:3592`, `0.0.0.0:3592`) or Unix domain socket (`unix:/tmp/cerbos.http.sock`).
+</ParamField>
+
+<ParamField path="server.grpcListenAddr" type="string" required default=":3593">
+  gRPC server listen address. Can be a TCP address (`:3593`, `0.0.0.0:3593`) or Unix domain socket (`unix:/tmp/cerbos.grpc.sock`).
+</ParamField>
+
+<ParamField path="server.udsFileMode" type="string" default="0o766">
+  File permissions for Unix domain sockets. Must be specified in octal format.
+</ParamField>
+
+```yaml
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+  udsFileMode: "0o766"
+```
+
+## TLS Configuration
+
+Configure TLS/SSL encryption for secure connections.
+
+<ParamField path="server.tls.cert" type="string">
+  Path to the TLS certificate file.
+</ParamField>
+
+<ParamField path="server.tls.key" type="string">
+  Path to the TLS private key file.
+</ParamField>
+
+<ParamField path="server.tls.caCert" type="string">
+  Path to the CA certificate for verifying client certificates (mutual TLS).
+</ParamField>
+
+```yaml
+server:
+  tls:
+    cert: /path/to/server.crt
+    key: /path/to/server.key
+    caCert: /path/to/ca.crt  # Optional: for client certificate verification
+```
+
+<Note>
+  Both `cert` and `key` must be provided to enable TLS. If either is missing, TLS will be disabled.
+</Note>
+
+## Admin API
+
+The Admin API provides endpoints for managing policies, schemas, and server operations.
+
+<ParamField path="server.adminAPI.enabled" type="boolean" default="false">
+  Enable or disable the Admin API.
+</ParamField>
+
+<ParamField path="server.adminAPI.adminCredentials.username" type="string" default="cerbos">
+  Username for Admin API authentication.
+</ParamField>
+
+<ParamField path="server.adminAPI.adminCredentials.passwordHash" type="string">
+  Base64-encoded bcrypt hash of the admin password.
+</ParamField>
+
+```yaml
+server:
+  adminAPI:
+    enabled: true
+    adminCredentials:
+      username: admin
+      passwordHash: JDJ5JDEwJEdEOVFzZDE2VVhoVkR0N2VkUFBVM09nalc0QnNZaC9xc2E4bS9mcUJJcEZXenp5OUpjMi91Cgo=
+```
+
+<Warning>
+  The default password is `cerbosAdmin`. Always change this in production by generating a bcrypt hash and encoding it in base64:
+  
+  ```bash
+  # Generate bcrypt hash and encode
+  htpasswd -bnBC 10 "" "your-password" | tr -d ":" | base64
+  ```
+</Warning>
+
+## CORS Configuration
+
+Configure Cross-Origin Resource Sharing for HTTP API access from web browsers.
+
+<ParamField path="server.cors.disabled" type="boolean" default="false">
+  Disable CORS entirely.
+</ParamField>
+
+<ParamField path="server.cors.allowedOrigins" type="string[]" default="['*']">
+  List of allowed origins. Use `['*']` to allow all origins.
+</ParamField>
+
+<ParamField path="server.cors.allowedHeaders" type="string[]" default="['content-type']">
+  List of allowed request headers.
+</ParamField>
+
+<ParamField path="server.cors.maxAge" type="duration" default="0s">
+  How long browsers can cache the preflight response.
+</ParamField>
+
+```yaml
+server:
+  cors:
+    allowedOrigins:
+      - "https://app.example.com"
+      - "https://admin.example.com"
+    allowedHeaders:
+      - "content-type"
+      - "authorization"
+    maxAge: 300s
+```
+
+## Request Limits
+
+Control the maximum size of authorization requests to prevent abuse.
+
+<ParamField path="server.requestLimits.maxActionsPerResource" type="integer" default="50">
+  Maximum number of actions that can be checked for a single resource in one request. Must be between 1 and 500.
+</ParamField>
+
+<ParamField path="server.requestLimits.maxResourcesPerRequest" type="integer" default="50">
+  Maximum number of resources that can be checked in a single batch request. Must be between 1 and 500.
+</ParamField>
+
+```yaml
+server:
+  requestLimits:
+    maxActionsPerResource: 100
+    maxResourcesPerRequest: 100
+```
+
+<Note>
+  These limits help prevent resource exhaustion from overly large requests. Adjust based on your performance requirements and security needs.
+</Note>
+
+## Feature Flags
+
+<ParamField path="server.metricsEnabled" type="boolean" default="true">
+  Enable Prometheus metrics endpoint at `/metrics`.
+</ParamField>
+
+<ParamField path="server.logRequestPayloads" type="boolean" default="false">
+  Log full request payloads for debugging. Use with caution in production.
+</ParamField>
+
+<ParamField path="server.apiExplorerEnabled" type="boolean" default="true">
+  Enable the API Explorer UI for testing API calls.
+</ParamField>
+
+```yaml
+server:
+  metricsEnabled: true
+  logRequestPayloads: false
+  apiExplorerEnabled: true
+```
+
+## Advanced HTTP Settings
+
+Fine-tune HTTP server timeouts and connection handling.
+
+<ParamField path="server.advanced.http.readTimeout" type="duration" default="30s">
+  Maximum duration for reading the entire request, including the body.
+</ParamField>
+
+<ParamField path="server.advanced.http.readHeaderTimeout" type="duration" default="15s">
+  Maximum duration for reading request headers.
+</ParamField>
+
+<ParamField path="server.advanced.http.writeTimeout" type="duration" default="30s">
+  Maximum duration for writing the response.
+</ParamField>
+
+<ParamField path="server.advanced.http.idleTimeout" type="duration" default="120s">
+  Maximum duration to wait for the next request when keep-alives are enabled.
+</ParamField>
+
+```yaml
+server:
+  advanced:
+    http:
+      readTimeout: 30s
+      readHeaderTimeout: 15s
+      writeTimeout: 30s
+      idleTimeout: 120s
+```
+
+## Advanced gRPC Settings
+
+Fine-tune gRPC server connection handling and limits.
+
+<ParamField path="server.advanced.grpc.maxRecvMsgSizeBytes" type="integer" default="4194304">
+  Maximum size of a single gRPC request message in bytes. Default is 4MiB. Affects performance and resource utilization.
+</ParamField>
+
+<ParamField path="server.advanced.grpc.maxConcurrentStreams" type="integer" default="1024">
+  Maximum number of concurrent streams per connection. Set to 0 to allow unlimited streams.
+</ParamField>
+
+<ParamField path="server.advanced.grpc.maxConnectionAge" type="duration" default="600s">
+  Maximum age of a connection before it's closed and recreated.
+</ParamField>
+
+<ParamField path="server.advanced.grpc.connectionTimeout" type="duration" default="60s">
+  Timeout for establishing new gRPC connections.
+</ParamField>
+
+```yaml
+server:
+  advanced:
+    grpc:
+      maxRecvMsgSizeBytes: 4194304  # 4 MiB
+      maxConcurrentStreams: 1024
+      maxConnectionAge: 600s
+      connectionTimeout: 60s
+```
+
+## Complete Example
+
+```yaml
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+  
+  tls:
+    cert: /etc/cerbos/tls/server.crt
+    key: /etc/cerbos/tls/server.key
+    caCert: /etc/cerbos/tls/ca.crt
+  
+  adminAPI:
+    enabled: true
+    adminCredentials:
+      username: admin
+      passwordHash: ${ADMIN_PASSWORD_HASH}
+  
+  cors:
+    allowedOrigins:
+      - "https://app.example.com"
+    allowedHeaders:
+      - "content-type"
+      - "authorization"
+  
+  requestLimits:
+    maxActionsPerResource: 100
+    maxResourcesPerRequest: 50
+  
+  metricsEnabled: true
+  apiExplorerEnabled: true
+  
+  advanced:
+    http:
+      readTimeout: 30s
+      writeTimeout: 30s
+    grpc:
+      maxRecvMsgSizeBytes: 4194304
+      maxConcurrentStreams: 1024
+```
+
+## Environment Variable Expansion
+
+Configuration values can reference environment variables using `${VAR_NAME}` syntax:
+
+```yaml
+server:
+  adminAPI:
+    adminCredentials:
+      username: ${ADMIN_USERNAME}
+      passwordHash: ${ADMIN_PASSWORD_HASH}
+```
+
+<Note>
+  Use `$$` to escape literal dollar signs in configuration values.
+</Note>

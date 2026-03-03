@@ -1,0 +1,206 @@
+---
+title: "cerbos run"
+description: "Run a command in the context of a Cerbos PDP"
+---
+
+## Overview
+
+The `cerbos run` command launches a command within the context of a Cerbos Policy Decision Point (PDP). This is useful for running tests or applications that need to interact with Cerbos without managing a separate server process.
+
+The command automatically:
+- Starts a Cerbos PDP server
+- Waits for it to be ready
+- Sets environment variables with Cerbos endpoints
+- Runs your command
+- Cleans up when your command exits
+
+## Usage
+
+```bash
+cerbos run [flags] -- <command> [args...]
+```
+
+Note the `--` separator between Cerbos flags and the command to run.
+
+## Arguments
+
+<ParamField path="command" type="string" required>
+  The command to run in the Cerbos context. All arguments after `--` are passed to this command.
+</ParamField>
+
+## Flags
+
+### Configuration
+
+<ParamField path="--config" type="path">
+  Path to the Cerbos configuration file.
+  
+  If not specified and a `.cerbos.yaml` file exists in the current directory, it will be used automatically.
+  
+  If no configuration file is found, a default configuration is used with policies loaded from a `policies` directory in the current working directory.
+</ParamField>
+
+<ParamField path="--set" type="string[]">
+  Override configuration values. Can be specified multiple times.
+  
+  Format: `key=value` (supports nested keys using dot notation)
+  
+  Example: `--set=server.adminAPI.enabled=true`
+</ParamField>
+
+### Logging
+
+<ParamField path="--log-level" type="string" default="info">
+  Set the log level for the Cerbos PDP.
+  
+  **Options:** `debug`, `info`, `warn`, `error`
+  
+  Use `error` to silence most Cerbos output.
+</ParamField>
+
+### Startup
+
+<ParamField path="--timeout" type="duration" default="30s">
+  Maximum time to wait for the Cerbos PDP to start and be ready.
+  
+  **Format:** Duration string (e.g., `30s`, `1m`, `500ms`)
+</ParamField>
+
+## Environment Variables
+
+When your command runs, the following environment variables are automatically set:
+
+- `CERBOS_HTTP` - HTTP endpoint address (e.g., `http://127.0.0.1:3592`)
+- `CERBOS_GRPC` - gRPC endpoint address (e.g., `127.0.0.1:3593`)
+
+Your application can use these to connect to the Cerbos instance.
+
+## Default Configuration
+
+If no configuration file is specified or found, `cerbos run` uses this default configuration:
+
+```yaml
+server:
+  httpListenAddr: "127.0.0.1:3592"
+  grpcListenAddr: "127.0.0.1:3593"
+storage:
+  driver: "disk"
+  disk:
+    directory: "./policies"
+    watchForChanges: true
+```
+
+The `policies` directory is created automatically if it doesn't exist.
+
+## Examples
+
+### Run Go tests with Cerbos
+
+```bash
+cerbos run -- go test ./...
+```
+
+### Run Python tests with Cerbos
+
+```bash
+cerbos run -- python -m unittest
+```
+
+### Run with a custom configuration file
+
+```bash
+cerbos run --config=myconf.yaml -- python -m unittest
+```
+
+### Silence Cerbos log output
+
+```bash
+cerbos run --log-level=error -- curl -I http://127.0.0.1:3592/_cerbos/health
+```
+
+### Run with configuration overrides
+
+```bash
+cerbos run \
+  --set=server.httpListenAddr=:8080 \
+  --set=server.adminAPI.enabled=true \
+  -- go test ./...
+```
+
+### Use with npm/node tests
+
+```bash
+cerbos run -- npm test
+```
+
+### Increase startup timeout
+
+```bash
+cerbos run --timeout=60s -- go test -v ./...
+```
+
+### Run with debug logging
+
+```bash
+cerbos run --log-level=debug -- ./my-app
+```
+
+## Exit Codes
+
+The `cerbos run` command exits with:
+- The exit code of your command if it runs successfully
+- A non-zero exit code if the Cerbos PDP fails to start
+- A non-zero exit code if your command fails to execute
+
+## Use Cases
+
+### Local Development
+
+Run your application locally with an embedded Cerbos instance:
+
+```bash
+cerbos run -- npm run dev
+```
+
+### Integration Testing
+
+Run integration tests that require Cerbos:
+
+```bash
+cerbos run -- pytest tests/integration/
+```
+
+### CI/CD Pipelines
+
+Use in CI to test against Cerbos without managing a separate service:
+
+```yaml
+# GitHub Actions example
+- name: Run integration tests
+  run: cerbos run -- go test -v ./...
+```
+
+### Quick Verification
+
+Quickly verify Cerbos is working:
+
+```bash
+cerbos run -- curl http://127.0.0.1:3592/_cerbos/health
+```
+
+## Policy Directory Structure
+
+By default, `cerbos run` looks for policies in a `policies` directory. Organize your policies like this:
+
+```
+policies/
+├── resource_policies/
+│   ├── album.yaml
+│   └── photo.yaml
+├── principal_policies/
+│   └── user.yaml
+└── derived_roles/
+    └── common_roles.yaml
+```
+
+The directory is watched for changes by default, so updates to policies are automatically picked up.

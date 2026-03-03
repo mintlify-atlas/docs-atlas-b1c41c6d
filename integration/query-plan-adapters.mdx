@@ -1,0 +1,296 @@
+---
+title: Query Plan Adapters
+description: Convert PlanResources query plans into database-specific queries for efficient filtering
+---
+
+Query plan adapters convert the output from the Cerbos `PlanResources` API into database-specific query filters. This enables efficient filtering of large datasets at the database level based on what a principal is authorized to access.
+
+## Overview
+
+The `PlanResources` API returns a query plan that describes which resources a principal can access. Query plan adapters translate this abstract plan into concrete database queries for your ORM or query builder.
+
+### When to Use Query Plan Adapters
+
+Use query plan adapters when you need to:
+
+- Filter lists or search results based on authorization
+- Implement pagination for authorized resources
+- Generate database queries that respect access control
+- Avoid loading all resources into memory for permission checks
+
+<Warning>
+Do not use `PlanResources` for checking permissions on a single known resource. Use `CheckResources` instead for better performance and simpler logic.
+</Warning>
+
+## Available Adapters
+
+<CardGroup cols={2}>
+  <Card
+    title="Prisma Adapter"
+    icon="database"
+    href="https://github.com/cerbos/query-plan-adapters/tree/main/prisma"
+  >
+    Convert query plans to Prisma query filters for TypeScript/JavaScript
+  </Card>
+  
+  <Card
+    title="SQLAlchemy Adapter"
+    icon="python"
+    href="https://github.com/cerbos/query-plan-adapters/tree/main/sqlalchemy"
+  >
+    Convert query plans to SQLAlchemy filters for Python
+  </Card>
+</CardGroup>
+
+## How Query Plans Work
+
+When you call `PlanResources`, Cerbos evaluates your policies and returns one of three plan types:
+
+### 1. Unconditional Allow
+
+All resources of the specified kind are allowed. No filtering is needed.
+
+```json
+{
+  "kind": "KIND_ALWAYS_ALLOWED"
+}
+```
+
+**Adapter behavior**: Return all records without additional filters.
+
+### 2. Unconditional Deny
+
+No resources of the specified kind are allowed.
+
+```json
+{
+  "kind": "KIND_ALWAYS_DENIED"
+}
+```
+
+**Adapter behavior**: Return an empty result set (query that matches nothing).
+
+### 3. Conditional
+
+Only resources matching specific conditions are allowed.
+
+```json
+{
+  "kind": "KIND_CONDITIONAL",
+  "condition": {
+    "expression": {
+      "operator": "eq",
+      "operands": [
+        {"variable": "request.resource.attr.owner"},
+        {"value": "user123"}
+      ]
+    }
+  }
+}
+```
+
+**Adapter behavior**: Translate the condition into a database filter (e.g., `WHERE owner = 'user123'`).
+
+## Prisma Adapter Example
+
+### Installation
+
+```bash
+npm install @cerbos/orm-prisma
+```
+
+### Usage
+
+```typescript
+import { PrismaClient } from "@prisma/client";
+import { PrismaCerbos } from "@cerbos/orm-prisma";
+import { Cerbos } from "@cerbos/sdk";
+
+const prisma = new PrismaClient();
+const cerbos = new Cerbos("http://localhost:3592");
+const prismaCerbos = new PrismaCerbos(cerbos, prisma);
+
+// Get albums the user can view
+const albums = await prismaCerbos.album.findMany({
+  principal: {
+    id: "user123",
+    roles: ["user"],
+  },
+  action: "view",
+});
+```
+
+The adapter:
+1. Calls `PlanResources` to get the query plan
+2. Converts the plan to a Prisma `where` clause
+3. Executes the filtered query
+4. Returns only authorized records
+
+### Advanced Filtering
+
+Combine authorization filters with application filters:
+
+```typescript
+const publicAlbums = await prismaCerbos.album.findMany(
+  {
+    principal: {
+      id: "user123",
+      roles: ["user"],
+    },
+    action: "view",
+  },
+  {
+    where: {
+      published: true,
+      createdAt: {
+        gte: new Date("2024-01-01"),
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: 10,
+  }
+);
+```
+
+## SQLAlchemy Adapter Example
+
+### Installation
+
+```bash
+pip install cerbos-sqlalchemy
+```
+
+### Usage
+
+```python
+from sqlalchemy import create_engine, Column, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from cerbos.sdk.client import CerbosClient
+from cerbos_sqlalchemy import get_query
+
+Base = declarative_base()
+
+class Album(Base):
+    __tablename__ = "albums"
+    id = Column(String, primary_key=True)
+    owner = Column(String)
+    public = Column(Boolean)
+
+engine = create_engine("sqlite:///albums.db")
+Session = sessionmaker(bind=engine)
+session = Session()
+
+cerbos = CerbosClient("http://localhost:3592")
+
+# Get albums the user can view
+query = get_query(
+    session=session,
+    model=Album,
+    principal={"id": "user123", "roles": ["user"]},
+    action="view",
+    resource_kind="album:object",
+    cerbos_client=cerbos,
+)
+
+albums = query.all()
+```
+
+The adapter:
+1. Calls `PlanResources` to get the query plan
+2. Converts the plan to SQLAlchemy filter expressions
+3. Returns a modified query with authorization filters applied
+4. You can further refine the query before execution
+
+### Combining Filters
+
+```python
+query = get_query(
+    session=session,
+    model=Album,
+    principal={"id": "user123", "roles": ["user"]},
+    action="view",
+    resource_kind="album:object",
+    cerbos_client=cerbos,
+)
+
+# Add application-specific filters
+albums = query.filter(
+    Album.published == True,
+    Album.created_at >= "2024-01-01"
+).order_by(Album.created_at.desc()).limit(10).all()
+```
+
+## Query Plan Mapping
+
+Query plan adapters map Cerbos expressions to database operations:
+
+| Cerbos Operator | Database Equivalent | Example |
+|----------------|---------------------|----------|
+| `eq` | `=` or `==` | `owner = 'user123'` |
+| `ne` | `!=` or `<>` | `status != 'deleted'` |
+| `in` | `IN` | `role IN ('admin', 'editor')` |
+| `lt` | `<` | `age < 18` |
+| `lte` | `<=` | `price <= 100` |
+| `gt` | `>` | `score > 50` |
+| `gte` | `>=` | `year >= 2024` |
+| `and` | `AND` | `public = true AND active = true` |
+| `or` | `OR` | `owner = 'user123' OR public = true` |
+| `not` | `NOT` | `NOT flagged = true` |
+
+## Performance Considerations
+
+### Database Indexes
+
+Ensure your database has indexes on columns used in authorization conditions:
+
+```sql
+CREATE INDEX idx_albums_owner ON albums(owner);
+CREATE INDEX idx_albums_public ON albums(public);
+CREATE INDEX idx_albums_flagged ON albums(flagged);
+```
+
+### Query Complexity
+
+Complex policies result in complex queries. Monitor query performance and optimize policies if needed:
+
+- Avoid deeply nested conditions when possible
+- Use simple equality checks for better index usage
+- Consider denormalizing authorization-relevant attributes
+
+### Caching Query Plans
+
+For frequently-used queries with stable permissions, consider caching the query plan:
+
+```typescript
+// Cache the plan for 5 minutes
+const cachedPlan = await cache.get(`plan:user123:view:album`);
+if (!cachedPlan) {
+  const plan = await cerbos.planResources({...});
+  await cache.set(`plan:user123:view:album`, plan, 300);
+}
+```
+
+<Warning>
+Only cache query plans when permissions are stable. Clear the cache when policies or user roles change.
+</Warning>
+
+## Building Custom Adapters
+
+If your ORM or query builder isn't supported, you can build a custom adapter:
+
+1. Call the `PlanResources` API
+2. Parse the returned query plan
+3. Translate conditions to your query builder's syntax
+4. Apply the filters to your base query
+
+Refer to the [Prisma](https://github.com/cerbos/query-plan-adapters/tree/main/prisma) and [SQLAlchemy](https://github.com/cerbos/query-plan-adapters/tree/main/sqlalchemy) adapter implementations for guidance.
+
+## Additional Resources
+
+- [PlanResources API reference](/api/plan-resources)
+- [Prisma adapter documentation](https://github.com/cerbos/query-plan-adapters/tree/main/prisma)
+- [SQLAlchemy adapter documentation](https://github.com/cerbos/query-plan-adapters/tree/main/sqlalchemy)
+- [Policy conditions guide](/policies/conditions)

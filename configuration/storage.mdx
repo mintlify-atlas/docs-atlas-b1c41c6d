@@ -1,0 +1,410 @@
+---
+title: Storage Configuration
+description: Configure policy storage backends including disk, Git, cloud blob storage (S3, GCS, Azure), and databases (PostgreSQL, MySQL, SQLite)
+---
+
+Cerbos requires a storage backend to load and manage policies. The storage driver is specified in the main configuration section.
+
+## Storage Driver Selection
+
+<ParamField path="storage.driver" type="string" required>
+  Storage backend to use. Valid values: `disk`, `git`, `blob`, `postgres`, `mysql`, `sqlite3`.
+</ParamField>
+
+```yaml
+storage:
+  driver: disk
+```
+
+## Disk Storage
+
+Store policies in a local directory. Ideal for development and simple deployments.
+
+<ParamField path="storage.disk.directory" type="string" required>
+  Path to the directory containing policy files.
+</ParamField>
+
+<ParamField path="storage.disk.watchForChanges" type="boolean" required default="false">
+  Enable automatic policy reloading when files change.
+</ParamField>
+
+```yaml
+storage:
+  driver: disk
+  disk:
+    directory: /var/cerbos/policies
+    watchForChanges: true
+```
+
+<Note>
+  File watching uses filesystem notifications for efficient change detection. On some systems, you may need to increase inotify limits.
+</Note>
+
+## Git Storage
+
+Fetch policies from a Git repository with automatic updates.
+
+<ParamField path="storage.git.protocol" type="string" required>
+  Git protocol to use: `https`, `ssh`, or `file`.
+</ParamField>
+
+<ParamField path="storage.git.url" type="string" required>
+  URL to the Git repository.
+</ParamField>
+
+<ParamField path="storage.git.branch" type="string" default="master">
+  Branch to checkout.
+</ParamField>
+
+<ParamField path="storage.git.subDir" type="string">
+  Subdirectory within the repository where policies are stored.
+</ParamField>
+
+<ParamField path="storage.git.checkoutDir" type="string">
+  Local directory to checkout the repository to. Defaults to system cache directory.
+</ParamField>
+
+<ParamField path="storage.git.updatePollInterval" type="duration" default="0s">
+  Interval to poll for repository updates. Set to `0` to disable polling.
+</ParamField>
+
+<ParamField path="storage.git.operationTimeout" type="duration" default="60s">
+  Timeout for Git operations (clone, fetch, pull).
+</ParamField>
+
+### HTTPS Authentication
+
+<ParamField path="storage.git.https.username" type="string">
+  Username for HTTPS authentication.
+</ParamField>
+
+<ParamField path="storage.git.https.password" type="string">
+  Password or personal access token for HTTPS authentication.
+</ParamField>
+
+```yaml
+storage:
+  driver: git
+  git:
+    protocol: https
+    url: https://github.com/example/policies.git
+    branch: main
+    subDir: cerbos/policies
+    checkoutDir: /var/cerbos/git
+    updatePollInterval: 60s
+    https:
+      username: ${GIT_USERNAME}
+      password: ${GITHUB_TOKEN}
+```
+
+### SSH Authentication
+
+<ParamField path="storage.git.ssh.user" type="string" default="git">
+  SSH user for authentication.
+</ParamField>
+
+<ParamField path="storage.git.ssh.privateKeyFile" type="string">
+  Path to the SSH private key file.
+</ParamField>
+
+<ParamField path="storage.git.ssh.password" type="string">
+  Password for the SSH private key (if encrypted).
+</ParamField>
+
+```yaml
+storage:
+  driver: git
+  git:
+    protocol: ssh
+    url: git@github.com:example/policies.git
+    branch: main
+    ssh:
+      user: git
+      privateKeyFile: /home/cerbos/.ssh/id_rsa
+      password: ${SSH_KEY_PASSWORD}
+```
+
+### File Protocol
+
+```yaml
+storage:
+  driver: git
+  git:
+    protocol: file
+    url: file:///var/repos/policies
+    branch: main
+    updatePollInterval: 30s
+```
+
+## Blob Storage (S3, GCS, Azure)
+
+Fetch policies from cloud blob storage with automatic updates.
+
+<ParamField path="storage.blob.bucket" type="string" required>
+  Bucket URL. Format depends on provider:
+  - S3: `s3://bucket-name?region=us-east-1`
+  - GCS: `gs://bucket-name`
+  - Azure: `azblob://container-name`
+</ParamField>
+
+<ParamField path="storage.blob.prefix" type="string">
+  Prefix (subdirectory) within the bucket to download policies from.
+</ParamField>
+
+<ParamField path="storage.blob.workDir" type="string">
+  Local directory to download policies to. Defaults to system cache directory.
+</ParamField>
+
+<ParamField path="storage.blob.updatePollInterval" type="duration" default="0s">
+  Interval to poll for bucket updates. Set to `0` to disable polling.
+</ParamField>
+
+<ParamField path="storage.blob.downloadTimeout" type="duration" default="60s">
+  Timeout for downloading from cloud storage.
+</ParamField>
+
+<ParamField path="storage.blob.requestTimeout" type="duration" default="5s">
+  Timeout for individual HTTP requests to cloud storage.
+</ParamField>
+
+### AWS S3
+
+```yaml
+storage:
+  driver: blob
+  blob:
+    bucket: s3://my-policies-bucket?region=us-west-2
+    prefix: cerbos/policies
+    workDir: /var/cerbos/work
+    updatePollInterval: 60s
+    downloadTimeout: 30s
+    requestTimeout: 10s
+```
+
+<Note>
+  S3 authentication uses the default AWS credential chain (environment variables, IAM role, shared credentials file).
+</Note>
+
+### Google Cloud Storage
+
+```yaml
+storage:
+  driver: blob
+  blob:
+    bucket: gs://my-policies-bucket
+    prefix: policies
+    updatePollInterval: 60s
+```
+
+<Note>
+  GCS authentication uses Application Default Credentials (ADC).
+</Note>
+
+### Azure Blob Storage
+
+```yaml
+storage:
+  driver: blob
+  blob:
+    bucket: azblob://my-container
+    prefix: policies
+    updatePollInterval: 60s
+```
+
+<Note>
+  Azure authentication uses environment variables (`AZURE_STORAGE_ACCOUNT`, `AZURE_STORAGE_KEY`) or managed identity.
+</Note>
+
+## PostgreSQL Storage
+
+Store policies in a PostgreSQL database.
+
+<ParamField path="storage.postgres.url" type="string" required>
+  PostgreSQL connection URL. Format: `postgres://user:password@host:port/database?options`
+</ParamField>
+
+<ParamField path="storage.postgres.skipSchemaCheck" type="boolean" default="false">
+  Skip checking for required database schema on startup.
+</ParamField>
+
+### Connection Pool
+
+<ParamField path="storage.postgres.connPool.maxLifeTime" type="duration">
+  Maximum lifetime of a connection.
+</ParamField>
+
+<ParamField path="storage.postgres.connPool.maxIdleTime" type="duration">
+  Maximum time a connection can be idle.
+</ParamField>
+
+<ParamField path="storage.postgres.connPool.maxOpen" type="integer">
+  Maximum number of open connections.
+</ParamField>
+
+<ParamField path="storage.postgres.connPool.maxIdle" type="integer">
+  Maximum number of idle connections.
+</ParamField>
+
+### Connection Retry
+
+<ParamField path="storage.postgres.connRetry.maxAttempts" type="integer" default="3">
+  Maximum number of connection attempts.
+</ParamField>
+
+<ParamField path="storage.postgres.connRetry.initialInterval" type="duration">
+  Initial wait time between retry attempts.
+</ParamField>
+
+<ParamField path="storage.postgres.connRetry.maxInterval" type="duration">
+  Maximum wait time between retry attempts.
+</ParamField>
+
+```yaml
+storage:
+  driver: postgres
+  postgres:
+    url: postgres://cerbos:password@localhost:5432/cerbos?sslmode=require
+    connPool:
+      maxLifeTime: 60m
+      maxIdleTime: 45s
+      maxOpen: 10
+      maxIdle: 2
+    connRetry:
+      maxAttempts: 5
+      initialInterval: 500ms
+      maxInterval: 60s
+```
+
+<Warning>
+  Ensure the database schema is initialized before starting Cerbos. Use the schema migration scripts provided in the Cerbos distribution.
+</Warning>
+
+## MySQL Storage
+
+Store policies in a MySQL/MariaDB database.
+
+<ParamField path="storage.mysql.dsn" type="string" required>
+  MySQL data source name (DSN). Format: `user:password@tcp(host:port)/database?options`
+</ParamField>
+
+<ParamField path="storage.mysql.skipSchemaCheck" type="boolean" default="false">
+  Skip checking for required database schema on startup.
+</ParamField>
+
+### Connection Pool and Retry
+
+Same options as PostgreSQL: `connPool` and `connRetry`.
+
+### TLS Configuration
+
+<ParamField path="storage.mysql.tls" type="object">
+  Map of TLS configuration names to certificate paths.
+</ParamField>
+
+<ParamField path="storage.mysql.serverPubKey" type="object">
+  Map of server public key names to file paths.
+</ParamField>
+
+```yaml
+storage:
+  driver: mysql
+  mysql:
+    dsn: cerbos:password@tcp(localhost:3306)/cerbos?tls=custom&interpolateParams=true
+    tls:
+      custom:
+        cert: /etc/cerbos/tls/client.crt
+        key: /etc/cerbos/tls/client.key
+        caCert: /etc/cerbos/tls/ca.crt
+    connPool:
+      maxLifeTime: 60m
+      maxIdleTime: 45s
+      maxOpen: 4
+      maxIdle: 1
+    connRetry:
+      maxAttempts: 3
+      initialInterval: 500ms
+      maxInterval: 60s
+```
+
+<Note>
+  The `interpolateParams=true` option is recommended for better performance and security.
+</Note>
+
+## SQLite Storage
+
+Store policies in an SQLite database file.
+
+<ParamField path="storage.sqlite3.dsn" type="string" required>
+  SQLite data source name. Can be a file path or `:memory:` for in-memory database.
+</ParamField>
+
+```yaml
+storage:
+  driver: sqlite3
+  sqlite3:
+    dsn: "/var/cerbos/db/policies.db?_fk=true"
+```
+
+```yaml
+storage:
+  driver: sqlite3
+  sqlite3:
+    dsn: ":memory:?_fk=true"
+```
+
+<Warning>
+  SQLite is suitable for development and small deployments. For production use with multiple instances, use PostgreSQL or MySQL.
+</Warning>
+
+<Note>
+  The `_fk=true` parameter enables foreign key constraints, which is recommended.
+</Note>
+
+## Complete Examples
+
+### Production Git Setup
+
+```yaml
+storage:
+  driver: git
+  git:
+    protocol: https
+    url: https://github.com/acme/policies.git
+    branch: production
+    subDir: cerbos
+    updatePollInterval: 300s
+    operationTimeout: 120s
+    https:
+      username: bot-account
+      password: ${GITHUB_TOKEN}
+```
+
+### Production S3 Setup
+
+```yaml
+storage:
+  driver: blob
+  blob:
+    bucket: s3://acme-cerbos-policies?region=eu-west-1
+    prefix: prod/policies
+    updatePollInterval: 120s
+    downloadTimeout: 60s
+```
+
+### Production PostgreSQL Setup
+
+```yaml
+storage:
+  driver: postgres
+  postgres:
+    url: postgres://cerbos:${DB_PASSWORD}@db.internal:5432/cerbos?sslmode=verify-full&sslrootcert=/etc/cerbos/ca.crt
+    connPool:
+      maxLifeTime: 3600s
+      maxIdleTime: 300s
+      maxOpen: 20
+      maxIdle: 5
+    connRetry:
+      maxAttempts: 5
+      initialInterval: 1s
+      maxInterval: 30s
+```

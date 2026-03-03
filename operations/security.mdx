@@ -1,0 +1,560 @@
+---
+title: Security Best Practices
+description: Secure your Cerbos deployment with TLS, authentication, and production-ready security configurations
+---
+
+This guide covers security best practices for production Cerbos deployments, including TLS configuration, authentication, and secure operational practices.
+
+## Transport Layer Security (TLS)
+
+### Enabling TLS
+
+Cerbos supports TLS for both HTTP and gRPC endpoints. Configure TLS by specifying certificate and key paths:
+
+```yaml
+server:
+  tls:
+    cert: /path/to/certificate.crt
+    key: /path/to/private_key.key
+```
+
+**Certificate Requirements:**
+- Valid X.509 certificate
+- Matching private key
+- PEM-encoded format
+
+### Automatic Certificate Reloading
+
+Cerbos automatically watches and reloads TLS certificates when they change on disk, enabling zero-downtime certificate rotation:
+
+```yaml
+server:
+  tls:
+    cert: /etc/certs/tls.crt
+    key: /etc/certs/tls.key
+```
+
+Certificate updates are detected and applied without service restart.
+
+### Client Certificate Authentication (mTLS)
+
+Enable mutual TLS to verify client certificates:
+
+```yaml
+server:
+  tls:
+    cert: /path/to/server.crt
+    key: /path/to/server.key
+    caCert: /path/to/ca.crt
+```
+
+With `caCert` configured:
+- Client certificates are verified against the CA
+- `ClientAuth` mode: `VerifyClientCertIfGiven`
+- Clients without valid certs are rejected
+
+### TLS Configuration Best Practices
+
+Cerbos uses secure TLS defaults:
+- Minimum TLS version: 1.2
+- Strong cipher suites enabled
+- Secure curve preferences (P-256, P-384, P-521, X25519)
+
+**Production Recommendations:**
+
+<AccordionGroup>
+  <Accordion title="Use a Reverse Proxy for Advanced TLS">
+    For production deployments requiring advanced TLS features, run a reverse proxy:
+    
+    - **Envoy**: Advanced mTLS, certificate rotation, SPIFFE/SPIRE integration
+    - **Traefik**: Automatic Let's Encrypt, certificate management
+    - **Ghostunnel**: Mutual TLS proxy with PKCS11 support
+    - **nginx**: High-performance TLS termination
+    
+    Benefits:
+    - Workload identity management
+    - Advanced certificate rotation strategies
+    - ACME protocol support (Let's Encrypt)
+    - OCSP stapling
+    - Certificate pinning
+  </Accordion>
+
+  <Accordion title="Certificate Management in Kubernetes">
+    Use cert-manager for automated certificate lifecycle:
+    
+    ```yaml
+    apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: cerbos-tls
+    spec:
+      secretName: cerbos-tls-secret
+      issuerRef:
+        name: letsencrypt-prod
+        kind: ClusterIssuer
+      dnsNames:
+        - cerbos.example.com
+    ---
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: cerbos
+    spec:
+      containers:
+        - name: cerbos
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/certs
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: cerbos-tls-secret
+    ```
+  </Accordion>
+
+  <Accordion title="Certificate Rotation Strategy">
+    **Automated Rotation:**
+    1. External tool updates certificate files
+    2. Cerbos detects change via filesystem watcher
+    3. New certificate loaded automatically
+    4. No service interruption
+    
+    **Testing Rotation:**
+    ```bash
+    # Monitor Cerbos logs
+    tail -f /var/log/cerbos/cerbos.log
+    
+    # Update certificate
+    cp /path/to/new-cert.crt /etc/certs/tls.crt
+    cp /path/to/new-key.key /etc/certs/tls.key
+    
+    # Verify reload in logs
+    # Should see: "Certificate updated"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Admin API Security
+
+The Admin API provides write access to policies and must be secured appropriately.
+
+### Enabling Admin API
+
+```yaml
+server:
+  adminAPI:
+    enabled: true
+    adminCredentials:
+      username: cerbos
+      passwordHash: <base64-encoded-bcrypt-hash>
+```
+
+### Generating Secure Passwords
+
+Create a bcrypt-hashed, base64-encoded password:
+
+```bash
+# Linux
+echo "YourSecurePassword" | htpasswd -niBC 10 cerbos | cut -d ':' -f 2 | base64 -w0
+
+# macOS
+echo "YourSecurePassword" | htpasswd -niBC 10 cerbos | cut -d ':' -f 2 | base64
+```
+
+**Password Requirements:**
+- Minimum bcrypt cost: 10 (higher is more secure but slower)
+- Unique, randomly generated passwords
+- Stored in base64-encoded format
+- Never commit passwords to version control
+
+### Admin API Authentication
+
+All Admin API requests require HTTP Basic Authentication:
+
+```bash
+# Using cerbosctl
+cerbosctl --server=localhost:3593 \
+  --username=cerbos \
+  --password=YourSecurePassword \
+  get policies
+
+# Using curl
+curl -u cerbos:YourSecurePassword \
+  https://localhost:3592/admin/policy
+```
+
+### Admin API Best Practices
+
+<Warning>
+**Critical Security Requirements:**
+
+1. **Always use TLS** when Admin API is enabled
+2. **Never use default credentials** in production
+3. **Rotate passwords regularly**
+4. **Restrict network access** to Admin API endpoints
+5. **Use audit logging** to track administrative actions
+</Warning>
+
+**Network Security:**
+
+```yaml
+# Kubernetes NetworkPolicy example
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cerbos-admin-access
+spec:
+  podSelector:
+    matchLabels:
+      app: cerbos
+  ingress:
+    # Allow admin access only from specific pods
+    - from:
+        - podSelector:
+            matchLabels:
+              role: admin-client
+      ports:
+        - protocol: TCP
+          port: 3593
+```
+
+## Request Metadata Security
+
+### Filtering Sensitive Headers
+
+Prevent sensitive data from appearing in audit logs:
+
+```yaml
+audit:
+  enabled: true
+  excludeMetadataKeys:
+    - authorization
+    - x-api-key
+    - cookie
+    - x-auth-token
+  includeMetadataKeys:
+    - content-type
+    - user-agent
+    - x-request-id
+```
+
+**Default Behavior:**
+- `authorization` header is excluded by default
+- Empty lists = no metadata logged
+- `excludeMetadataKeys` takes precedence over `includeMetadataKeys`
+
+### Header Metadata Forwarding
+
+Cerbos automatically handles header translation between HTTP and gRPC:
+
+**Blocked Headers** (removed in translation):
+- `Connection`
+- `Keep-Alive`
+- `Proxy-Connection`
+- `Transfer-Encoding`
+- `Upgrade`
+- `Content-Length` (recalculated)
+- `Host` (translated to `X-Forwarded-Host`)
+
+**Special Handling:**
+- `User-Agent` → `Grpcgateway-User-Agent`
+
+## Storage Security
+
+### Git Repository Authentication
+
+Secure git storage with SSH keys or HTTPS tokens:
+
+```yaml
+storage:
+  driver: git
+  git:
+    protocol: https
+    url: https://github.com/org/policies.git
+    auth:
+      username: oauth2
+      password: ${GITHUB_TOKEN}
+```
+
+```yaml
+storage:
+  driver: git
+  git:
+    protocol: ssh
+    url: git@github.com:org/policies.git
+    sshAuth:
+      privateKeyFile: /etc/cerbos/ssh/id_rsa
+```
+
+### Database Storage Security
+
+Connect to databases securely:
+
+```yaml
+storage:
+  driver: postgres
+  postgres:
+    url: "postgresql://user:${DB_PASSWORD}@localhost:5432/cerbos?sslmode=verify-full&sslrootcert=/path/to/ca.crt"
+```
+
+**TLS Parameters:**
+- `sslmode=verify-full`: Verify certificate and hostname
+- `sslmode=verify-ca`: Verify certificate only
+- `sslmode=require`: Require TLS but don't verify
+- `sslrootcert`: Custom CA certificate
+- `sslcert`, `sslkey`: Client certificate for mTLS
+
+### Blob Storage Authentication
+
+Secure cloud storage access:
+
+```yaml
+storage:
+  driver: blob
+  blob:
+    bucket: s3://cerbos-policies?region=us-east-1
+    # Use IAM roles instead of embedded credentials
+```
+
+**Best Practices:**
+- Use IAM roles/service accounts instead of static credentials
+- Enable server-side encryption
+- Use bucket policies for access control
+- Enable versioning for policy rollback
+
+## Audit Log Security
+
+### Kafka TLS Configuration
+
+```yaml
+audit:
+  backend: kafka
+  kafka:
+    brokers: ['kafka:9093']
+    topic: cerbos.audit.log
+    authentication:
+      tls:
+        caPath: /path/to/ca.crt
+        certPath: /path/to/client.crt
+        keyPath: /path/to/client.key
+        insecureSkipVerify: false
+        reloadInterval: 5m
+```
+
+### Hub Backend Security
+
+Cerbos Hub uses end-to-end encryption:
+
+```yaml
+audit:
+  backend: hub
+  hub:
+    storagePath: /var/cerbos/audit
+    retentionPeriod: 168h
+    mask:
+      # Redact sensitive fields from audit logs
+      checkResources:
+        - inputs[*].principal.attr.password
+        - inputs[*].principal.attr.ssn
+      metadata:
+        - authorization
+```
+
+## Network Security
+
+### Listen Address Configuration
+
+```yaml
+server:
+  # Bind to specific interface (recommended)
+  httpListenAddr: "192.168.1.10:3592"
+  grpcListenAddr: "192.168.1.10:3593"
+  
+  # Or bind to localhost only
+  httpListenAddr: "127.0.0.1:3592"
+  grpcListenAddr: "127.0.0.1:3593"
+```
+
+<Warning>
+Avoid binding to all interfaces (`0.0.0.0` or `:port`) unless behind a firewall or using network policies.
+</Warning>
+
+### Unix Domain Sockets
+
+For local-only access with file system permissions:
+
+```yaml
+server:
+  httpListenAddr: "unix:/var/run/cerbos/http.sock"
+  grpcListenAddr: "unix:/var/run/cerbos/grpc.sock"
+  udsFileMode: "0770"
+```
+
+### CORS Configuration
+
+Restrict cross-origin requests:
+
+```yaml
+server:
+  cors:
+    allowedOrigins:
+      - https://app.example.com
+      - https://admin.example.com
+    allowedHeaders:
+      - accept
+      - content-type
+      - authorization
+```
+
+## Secrets Management
+
+### Environment Variable Substitution
+
+Use environment variables for sensitive configuration:
+
+```yaml
+server:
+  adminAPI:
+    enabled: true
+    adminCredentials:
+      username: ${ADMIN_USERNAME}
+      passwordHash: ${ADMIN_PASSWORD_HASH}
+
+storage:
+  driver: postgres
+  postgres:
+    url: "${DATABASE_URL}"
+
+audit:
+  backend: kafka
+  kafka:
+    brokers: ['${KAFKA_BROKER}']
+```
+
+### External Secrets Integration
+
+<AccordionGroup>
+  <Accordion title="Kubernetes Secrets">
+    ```yaml
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: cerbos-admin
+    type: Opaque
+    data:
+      username: Y2VyYm9z  # base64(cerbos)
+      passwordHash: <base64-bcrypt-hash>
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    spec:
+      template:
+        spec:
+          containers:
+            - name: cerbos
+              env:
+                - name: ADMIN_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: cerbos-admin
+                      key: username
+                - name: ADMIN_PASSWORD_HASH
+                  valueFrom:
+                    secretKeyRef:
+                      name: cerbos-admin
+                      key: passwordHash
+    ```
+  </Accordion>
+
+  <Accordion title="HashiCorp Vault">
+    ```bash
+    # Store secrets in Vault
+    vault kv put secret/cerbos/admin \
+      username=cerbos \
+      passwordHash=<bcrypt-hash>
+    
+    # Retrieve at runtime
+    export ADMIN_USERNAME=$(vault kv get -field=username secret/cerbos/admin)
+    export ADMIN_PASSWORD_HASH=$(vault kv get -field=passwordHash secret/cerbos/admin)
+    
+    cerbos server --config=.cerbos.yaml
+    ```
+  </Accordion>
+
+  <Accordion title="AWS Secrets Manager">
+    ```bash
+    # Store secret
+    aws secretsmanager create-secret \
+      --name cerbos/admin \
+      --secret-string '{"username":"cerbos","passwordHash":"..."}'
+    
+    # Use IAM role for access
+    # Cerbos container retrieves via AWS SDK
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Resource Limits
+
+Protect against resource exhaustion:
+
+```yaml
+server:
+  requestLimits:
+    maxActionsPerResource: 50
+    maxResourcesPerRequest: 50
+  
+  advanced:
+    grpc:
+      maxRecvMsgSizeBytes: 4194304  # 4MB
+      maxConcurrentStreams: 100
+      connectionTimeout: 120s
+      maxConnectionAge: 300s
+```
+
+## Security Checklist
+
+<AccordionGroup>
+  <Accordion title="Pre-Production Security Review">
+    - [ ] TLS enabled for all endpoints
+    - [ ] Admin API using strong, unique credentials
+    - [ ] Admin API password never committed to version control
+    - [ ] Sensitive headers excluded from audit logs
+    - [ ] Storage backend uses authentication
+    - [ ] Network policies restrict Admin API access
+    - [ ] Secrets managed via external secret store
+    - [ ] CORS configured with specific origins
+    - [ ] Request limits configured appropriately
+    - [ ] Audit logging enabled and secured
+  </Accordion>
+
+  <Accordion title="Ongoing Security Practices">
+    - [ ] Regular password rotation (90 days)
+    - [ ] Certificate expiration monitoring
+    - [ ] Audit log review for suspicious activity
+    - [ ] Security updates applied promptly
+    - [ ] Access review for Admin API users
+    - [ ] Backup and disaster recovery tested
+    - [ ] Incident response plan documented
+  </Accordion>
+
+  <Accordion title="Compliance Considerations">
+    - [ ] Audit logs retained per compliance requirements
+    - [ ] Data encryption at rest and in transit
+    - [ ] Access control documentation
+    - [ ] Change management process
+    - [ ] Data residency requirements met
+    - [ ] Privacy impact assessment completed
+  </Accordion>
+</AccordionGroup>
+
+## Security Reporting
+
+Report security vulnerabilities responsibly:
+
+- **Email**: [email protected]
+- **Public Issues**: GitHub repository (for non-sensitive issues)
+- **Security Advisories**: Check Cerbos GitHub security tab
+
+Always use the latest Cerbos version to receive security updates.

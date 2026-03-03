@@ -1,0 +1,336 @@
+---
+title: PlanResources API
+description: Produce a query plan with conditions that must be satisfied for accessing a set of instances of a resource
+---
+
+The PlanResources API generates a query plan that describes the conditions under which a principal can perform specific actions on a resource kind. This is particularly useful for implementing filtered list views where you need to show only the resources a user has access to.
+
+## Endpoint
+
+<CodeGroup>
+```text gRPC
+rpc PlanResources(PlanResourcesRequest) returns (PlanResourcesResponse)
+```
+
+```text REST
+POST /api/plan/resources
+```
+</CodeGroup>
+
+## Request Parameters
+
+<ParamField path="requestId" type="string">
+  Optional application-specific ID useful for correlating logs for analysis.
+  
+  Example: `"c2db17b8-4f9f-4fb1-acfd-9162a02be42b"`
+</ParamField>
+
+<ParamField path="includeMeta" type="boolean">
+  Opt to receive request processing metadata in the response.
+</ParamField>
+
+<ParamField path="principal" type="object" required>
+  A person or application attempting to perform the actions on the set of resources.
+  
+  <Expandable title="Principal fields">
+    <ParamField path="id" type="string" required>
+      ID of the principal.
+      
+      Example: `"user123"`
+    </ParamField>
+    
+    <ParamField path="roles" type="string[]" required>
+      Roles assigned to this principal from your identity management system. Must contain at least one role.
+      
+      Example: `["user", "manager"]`
+    </ParamField>
+    
+    <ParamField path="attr" type="object">
+      Key-value pairs of contextual data about this principal that should be used during policy evaluation.
+      
+      Example: `{"department": "engineering"}`
+    </ParamField>
+    
+    <ParamField path="policyVersion" type="string">
+      The policy version to use to evaluate this request. If not specified, will default to the server-configured default version.
+      
+      Example: `"default"`
+    </ParamField>
+    
+    <ParamField path="scope" type="string">
+      A dot-separated scope that describes the hierarchy this principal belongs to. This is used for determining policy inheritance.
+      
+      Example: `"acme.corp"`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="resource" type="object" required>
+  The resource kind to generate the query plan for.
+  
+  <Expandable title="Resource fields">
+    <ParamField path="kind" type="string" required>
+      Resource kind.
+      
+      Example: `"album:object"`
+    </ParamField>
+    
+    <ParamField path="attr" type="object">
+      Key-value pairs of contextual data about the resource that are known at a time of the request.
+    </ParamField>
+    
+    <ParamField path="policyVersion" type="string">
+      The policy version to use to evaluate this request. If not specified, will default to the server-configured default version.
+      
+      Example: `"default"`
+    </ParamField>
+    
+    <ParamField path="scope" type="string">
+      A dot-separated scope that describes the hierarchy this resource belongs to. This is used for determining policy inheritance.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="action" type="string">
+  **Deprecated:** Use `actions` instead. Action to be applied to each resource in the list.
+  
+  Example: `"view"`
+</ParamField>
+
+<ParamField path="actions" type="string[]">
+  List of actions to generate the query plan for. Mutually exclusive with the singular `action` field. Must contain at least one action and all actions must be unique.
+  
+  Example: `["view", "edit"]`
+</ParamField>
+
+<ParamField path="auxData" type="object">
+  Structured auxiliary data useful for evaluating the request.
+  
+  <Expandable title="AuxData fields">
+    <ParamField path="jwt" type="object">
+      JWT from the original request.
+      
+      <Expandable title="JWT fields">
+        <ParamField path="token" type="string" required>
+          JWT from the original request.
+        </ParamField>
+        
+        <ParamField path="keySetId" type="string">
+          Key ID to use when decoding the token (defined in the Cerbos server configuration).
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Response Fields
+
+<ResponseField name="requestId" type="string">
+  Request ID provided in the request.
+  
+  Example: `"c2db17b8-4f9f-4fb1-acfd-9162a02be42b"`
+</ResponseField>
+
+<ResponseField name="action" type="string">
+  **Deprecated:** The action from the request.
+</ResponseField>
+
+<ResponseField name="actions" type="string[]">
+  Actions from the request.
+  
+  Example: `["view", "edit"]`
+</ResponseField>
+
+<ResponseField name="resourceKind" type="string">
+  Resource kind.
+  
+  Example: `"album:object"`
+</ResponseField>
+
+<ResponseField name="policyVersion" type="string">
+  The policy version.
+  
+  Example: `"default"`
+</ResponseField>
+
+<ResponseField name="filter" type="object">
+  Filter that describes the conditions for accessing resources.
+  
+  <Expandable title="Filter fields">
+    <ResponseField name="kind" type="string">
+      Filter kind. Defines whether the given action is always allowed, always denied or allowed conditionally.
+      
+      Possible values:
+      - `KIND_ALWAYS_ALLOWED`: The principal always has access to all resources of this kind for the specified action(s)
+      - `KIND_ALWAYS_DENIED`: The principal never has access to any resources of this kind for the specified action(s)
+      - `KIND_CONDITIONAL`: Access depends on resource attributes matching the condition
+    </ResponseField>
+    
+    <ResponseField name="condition" type="object">
+      Filter condition. Only populated if kind is `KIND_CONDITIONAL`. This contains a query expression that can be translated into a database query using query plan adapters.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="meta" type="object">
+  Optional metadata about the request evaluation process.
+  
+  <Expandable title="Meta fields">
+    <ResponseField name="filterDebug" type="string">
+      Filter textual representation for debugging purposes.
+    </ResponseField>
+    
+    <ResponseField name="matchedScopes" type="object">
+      Matched policy scope for each action. Keys are action names, values are scope paths.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="validationErrors" type="object[]">
+  List of validation errors (if schema validation is enabled).
+</ResponseField>
+
+<ResponseField name="cerbosCallId" type="string">
+  Audit log call ID associated with this request.
+</ResponseField>
+
+## Example
+
+<CodeGroup>
+```bash cURL
+cat <<EOF | curl --silent "http://localhost:3592/api/plan/resources?pretty" -d @-
+{
+  "requestId": "test02",
+  "includeMeta": true,
+  "principal": {
+    "id": "alicia",
+    "roles": ["user"],
+    "attr": {
+      "department": "marketing"
+    }
+  },
+  "resource": {
+    "kind": "album:object"
+  },
+  "action": "view"
+}
+EOF
+```
+
+```json Response (Always Allowed)
+{
+  "requestId": "test02",
+  "action": "view",
+  "resourceKind": "album:object",
+  "policyVersion": "default",
+  "filter": {
+    "kind": "KIND_ALWAYS_ALLOWED"
+  },
+  "meta": {
+    "matchedScopes": {
+      "view": ""
+    }
+  }
+}
+```
+
+```json Response (Conditional)
+{
+  "requestId": "test02",
+  "action": "view",
+  "resourceKind": "album:object",
+  "policyVersion": "default",
+  "filter": {
+    "kind": "KIND_CONDITIONAL",
+    "condition": {
+      "expression": {
+        "operator": "eq",
+        "operands": [
+          {"variable": "request.resource.attr.owner"},
+          {"value": "alicia"}
+        ]
+      }
+    }
+  },
+  "meta": {
+    "filterDebug": "request.resource.attr.owner == 'alicia'",
+    "matchedScopes": {
+      "view": ""
+    }
+  }
+}
+```
+</CodeGroup>
+
+## Use Cases
+
+### Filtered List Views
+
+The most common use case is implementing filtered list views where you need to show only the resources a user can access:
+
+```json
+{
+  "principal": {
+    "id": "user123",
+    "roles": ["user"]
+  },
+  "resource": {
+    "kind": "document"
+  },
+  "action": "view"
+}
+```
+
+The response can be used with query plan adapters to generate database queries:
+
+- **KIND_ALWAYS_ALLOWED**: Return all documents
+- **KIND_ALWAYS_DENIED**: Return no documents
+- **KIND_CONDITIONAL**: Use the condition to filter the query (e.g., `WHERE owner = 'user123'`)
+
+### Multiple Actions
+
+Generate a query plan for multiple actions at once:
+
+```json
+{
+  "principal": {
+    "id": "user123",
+    "roles": ["user"]
+  },
+  "resource": {
+    "kind": "document"
+  },
+  "actions": ["view", "edit", "delete"]
+}
+```
+
+This returns a single filter that applies to all specified actions.
+
+### With Known Resource Attributes
+
+If you have some resource attributes known at query time, include them to get more specific query plans:
+
+```json
+{
+  "principal": {
+    "id": "user123",
+    "roles": ["user"]
+  },
+  "resource": {
+    "kind": "document",
+    "attr": {
+      "status": "published"
+    }
+  },
+  "action": "view"
+}
+```
+
+## Query Plan Adapters
+
+The filter returned by PlanResources can be converted to database-specific queries using query plan adapters:
+
+- **Prisma**: [Prisma Query Plan Adapter](https://github.com/cerbos/query-plan-adapters/tree/main/prisma)
+- **SQLAlchemy**: [SQLAlchemy Query Plan Adapter](https://github.com/cerbos/query-plan-adapters/tree/main/sqlalchemy)
+
+These adapters automatically translate the filter conditions into the appropriate query format for your database.

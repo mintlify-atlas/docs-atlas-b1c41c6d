@@ -1,0 +1,780 @@
+---
+title: "Derived Roles"
+description: "Dynamically assign roles to principals based on contextual data at request time"
+---
+
+## Overview
+
+Derived roles are **dynamic roles computed at runtime** based on the request context. Unlike static roles that come from your identity provider, derived roles are calculated by evaluating conditions against the principal, resource, and request attributes.
+
+Use derived roles to:
+- Assign "owner" based on who created a resource
+- Grant "manager" privileges based on organizational relationships
+- Create "project_member" roles based on team membership
+- Implement any context-aware role assignment
+
+## Why Derived Roles?
+
+Instead of duplicating the same condition across multiple resource policies:
+
+<CodeGroup>
+```yaml Without Derived Roles (Repetitive)
+# In every resource policy:
+rules:
+  - actions: ["edit"]
+    effect: EFFECT_ALLOW
+    roles: ["user"]
+    condition:
+      match:
+        expr: request.resource.attr.owner == request.principal.id
+  
+  - actions: ["delete"]
+    effect: EFFECT_ALLOW
+    roles: ["user"]
+    condition:
+      match:
+        expr: request.resource.attr.owner == request.principal.id
+```
+
+```yaml With Derived Roles (Reusable)
+# Define once in derived_roles/common_roles.yaml:
+deriveDoles:
+  name: common_roles
+  definitions:
+    - name: owner
+      parentRoles: ["user"]
+      condition:
+        match:
+          expr: request.resource.attr.owner == request.principal.id
+
+# Use everywhere:
+rules:
+  - actions: ["edit", "delete"]
+    effect: EFFECT_ALLOW
+    derivedRoles: ["owner"]
+```
+</CodeGroup>
+
+## Basic Structure
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+derivedRoles:
+  name: common_roles           # Unique name for this set
+  definitions:                 # List of derived role definitions
+    - name: owner
+      parentRoles: ["user"]
+      condition:
+        match:
+          expr: request.resource.attr.owner == request.principal.id
+```
+
+### Required Fields
+
+<ParamField path="name" type="string" required>
+  Unique identifier for this derived roles set. Used when importing into resource policies.
+</ParamField>
+
+<ParamField path="definitions" type="array" required>
+  List of derived role definitions. Each definition creates a new dynamic role.
+</ParamField>
+
+## Derived Role Definition
+
+Each role definition specifies:
+
+<ParamField path="name" type="string" required>
+  The name of the derived role. Used in resource policy rules.
+</ParamField>
+
+<ParamField path="parentRoles" type="array" required>
+  Static roles that can be granted this derived role. Use `["*"]` to allow any role.
+</ParamField>
+
+<ParamField path="condition" type="object">
+  Optional condition that must evaluate to true for the role to be granted. If omitted, the role is always granted to matching parent roles.
+</ParamField>
+
+## Complete Example
+
+Here's a comprehensive derived roles definition for a document management system:
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+description: |
+  Common dynamic roles used across the application
+
+derivedRoles:
+  name: common_roles
+  
+  # Local constants and variables
+  constants:
+    local:
+      max_document_age_days: 30
+  
+  variables:
+    local:
+      geography: request.resource.attr.geography
+  
+  definitions:
+    # Owner: user who created the resource
+    - name: owner
+      parentRoles: ["user"]
+      condition:
+        match:
+          expr: request.resource.attr.owner == request.principal.id
+    
+    # Collaborator: explicitly listed in resource collaborators
+    - name: collaborator
+      parentRoles: ["user"]
+      condition:
+        match:
+          expr: request.principal.id in request.resource.attr.collaborators
+    
+    # Direct manager: manager in same geography
+    - name: direct_manager
+      parentRoles: ["manager"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: request.resource.attr.geography == request.principal.attr.geography
+              - expr: request.resource.attr.owner_id in request.principal.attr.managed_users
+    
+    # Abuse moderator: moderator when content is flagged
+    - name: abuse_moderator
+      parentRoles: ["moderator"]
+      condition:
+        match:
+          expr: request.resource.attr.flagged == true
+    
+    # Recent contributor: user who edited in last 30 days
+    - name: recent_contributor
+      parentRoles: ["user"]
+      condition:
+        match:
+          expr: |-
+            request.principal.id in request.resource.attr.contributors &&
+            timestamp(request.resource.attr.last_edit).timeSince() < duration("720h")
+    
+    # Any employee: all employees, no conditions
+    - name: any_employee
+      parentRoles: ["employee"]
+```
+
+## Using Derived Roles
+
+### 1. Import into Resource Policies
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: document
+  version: "default"
+  
+  importDerivedRoles:
+    - common_roles       # Import from derived_roles/common_roles.yaml
+    - admin_roles        # Can import multiple sets
+  
+  rules:
+    - actions: ["*"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["owner"]  # Use the imported derived role
+    
+    - actions: ["view", "comment"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["collaborator"]
+```
+
+### 2. Combine with Static Roles
+
+Rules can use both static roles and derived roles:
+
+```yaml
+rules:
+  # Static roles OR derived roles
+  - actions: ["edit"]
+    effect: EFFECT_ALLOW
+    roles: ["admin"]           # Static role from identity provider
+    derivedRoles: ["owner"]    # OR dynamic owner role
+  
+  # Only derived roles
+  - actions: ["delete"]
+    effect: EFFECT_ALLOW
+    derivedRoles: ["owner", "direct_manager"]
+```
+
+## Parent Roles
+
+Parent roles act as a prerequisite - the principal must have at least one parent role for the derived role to apply.
+
+<CodeGroup>
+```yaml Specific Parent Roles
+definitions:
+  - name: team_lead
+    parentRoles: ["employee", "contractor"]  # Must be employee OR contractor
+    condition:
+      match:
+        expr: request.principal.attr.is_team_lead == true
+```
+
+```yaml Any Role (Wildcard)
+definitions:
+  - name: resource_owner
+    parentRoles: ["*"]  # Any authenticated user
+    condition:
+      match:
+        expr: request.resource.attr.owner == request.principal.id
+```
+
+```yaml No Condition (Always Granted)
+definitions:
+  - name: authenticated_user
+    parentRoles: ["user"]  # All users get this derived role
+    # No condition = always granted to parent roles
+```
+</CodeGroup>
+
+## Conditions in Derived Roles
+
+Conditions use the same syntax as resource policy conditions:
+
+<CodeGroup>
+```yaml Simple Expression
+definitions:
+  - name: owner
+    parentRoles: ["user"]
+    condition:
+      match:
+        expr: R.attr.owner == P.id
+```
+
+```yaml Multiple Conditions (ALL)
+definitions:
+  - name: senior_manager
+    parentRoles: ["manager"]
+    condition:
+      match:
+        all:
+          of:
+            - expr: P.attr.level >= 5
+            - expr: P.attr.tenure_years > 2
+```
+
+```yaml Multiple Conditions (ANY)
+definitions:
+  - name: privileged_user
+    parentRoles: ["user"]
+    condition:
+      match:
+        any:
+          of:
+            - expr: P.attr.vip == true
+            - expr: P.attr.account_type == "premium"
+```
+
+```yaml Nested Conditions
+definitions:
+  - name: regional_approver
+    parentRoles: ["manager"]
+    condition:
+      match:
+        all:
+          of:
+            - expr: R.attr.geography in P.attr.managed_regions
+            - any:
+                of:
+                  - expr: R.attr.amount < 50000
+                  - expr: P.attr.can_approve_high_value == true
+```
+</CodeGroup>
+
+See [Conditions](/policies/conditions) for complete expression syntax.
+
+## Variables and Constants
+
+Derived roles can define local constants and variables:
+
+```yaml
+derivedRoles:
+  name: common_roles
+  
+  constants:
+    local:
+      max_age_days: 30
+      approval_threshold: 10000
+    import:
+      - global_constants  # Import from export_constants/global_constants.yaml
+  
+  variables:
+    local:
+      is_fresh: |-
+        timestamp(request.resource.attr.created_at).timeSince() < duration("720h")
+      same_department: |-
+        request.resource.attr.department == request.principal.attr.department
+    import:
+      - common_vars  # Import from export_variables/common_vars.yaml
+  
+  definitions:
+    - name: department_owner
+      parentRoles: ["user"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: V.same_department
+              - expr: R.attr.owner == P.id
+```
+
+<Note>
+  Variables in derived roles are evaluated **per role definition**, so each derived role only uses variables referenced in its condition.
+</Note>
+
+## Shorthand Syntax
+
+Use request shortcuts for cleaner expressions:
+
+<CodeGroup>
+```yaml Verbose
+definitions:
+  - name: owner
+    parentRoles: ["user"]
+    condition:
+      match:
+        expr: request.resource.attr.owner == request.principal.id
+```
+
+```yaml Shorthand
+definitions:
+  - name: owner
+    parentRoles: ["user"]
+    condition:
+      match:
+        expr: R.attr.owner == P.id
+```
+</CodeGroup>
+
+**Available shortcuts:**
+- `P` = `request.principal`
+- `R` = `request.resource`
+- `V` = `variables`
+- `C` = `constants`
+
+## Multiple Derived Role Sets
+
+Organize related derived roles into separate files:
+
+```
+policies/
+├── derived_roles/
+│   ├── common_roles.yaml        # Basic ownership, collaborators
+│   ├── approval_roles.yaml      # Approval workflows
+│   ├── admin_roles.yaml         # Administrative roles
+│   └── department_roles.yaml    # Department-specific roles
+└── resource_policies/
+    └── document.yaml
+```
+
+Import multiple sets:
+
+```yaml
+resourcePolicy:
+  resource: document
+  importDerivedRoles:
+    - common_roles
+    - approval_roles
+    - department_roles
+  rules:
+    - actions: ["edit"]
+      derivedRoles: ["owner", "department_admin"]
+```
+
+<Warning>
+  If multiple imported sets define the same role name, compilation will fail with an ambiguous role error.
+</Warning>
+
+## Advanced Patterns
+
+<AccordionGroup>
+  <Accordion title="Hierarchical Ownership">
+    ```yaml
+    definitions:
+      # Direct owner
+      - name: owner
+        parentRoles: ["user"]
+        condition:
+          match:
+            expr: R.attr.owner == P.id
+      
+      # Team owner (owns parent resource)
+      - name: team_owner
+        parentRoles: ["user"]
+        condition:
+          match:
+            expr: R.attr.team_id in P.attr.owned_teams
+      
+      # Organization owner
+      - name: org_owner
+        parentRoles: ["user"]
+        condition:
+          match:
+            expr: R.attr.org_id == P.attr.owned_org
+    ```
+  </Accordion>
+  
+  <Accordion title="Time-Based Roles">
+    ```yaml
+    definitions:
+      # On-call engineer (during their shift)
+      - name: on_call_engineer
+        parentRoles: ["engineer"]
+        condition:
+          match:
+            all:
+              of:
+                - expr: P.id in R.attr.on_call_schedule
+                - expr: |-
+                    now().getHours() >= int(P.attr.shift_start) &&
+                    now().getHours() < int(P.attr.shift_end)
+    ```
+  </Accordion>
+  
+  <Accordion title="Proximity-Based Access">
+    ```yaml
+    definitions:
+      # Same office location
+      - name: local_user
+        parentRoles: ["employee"]
+        condition:
+          match:
+            expr: |-
+              R.attr.office_location == P.attr.office_location
+      
+      # Same IP range (for internal resources)
+      - name: internal_user
+        parentRoles: ["*"]
+        condition:
+          match:
+            expr: P.attr.ip_address.inIPAddrRange("10.0.0.0/8")
+    ```
+  </Accordion>
+  
+  <Accordion title="Resource State-Based Roles">
+    ```yaml
+    definitions:
+      # Can edit only draft documents
+      - name: draft_editor
+        parentRoles: ["user"]
+        condition:
+          match:
+            all:
+              of:
+                - expr: R.attr.status == "draft"
+                - expr: P.id in R.attr.editors
+      
+      # Can approve only pending requests
+      - name: pending_approver
+        parentRoles: ["manager"]
+        condition:
+          match:
+            expr: R.attr.status == "pending_approval"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Testing Derived Roles
+
+Test that derived roles are assigned correctly:
+
+```yaml
+# tests/derived_roles_test.yaml
+name: DerivedRolesTestSuite
+description: Tests for common_roles derived roles
+
+principals:
+  alice:
+    id: alice
+    roles: ["user"]
+    attr:
+      department: engineering
+  
+  bob:
+    id: bob
+    roles: ["manager"]
+    attr:
+      department: engineering
+      managed_users: ["alice", "charlie"]
+
+resources:
+  alice_document:
+    kind: document
+    id: doc1
+    attr:
+      owner: alice
+      department: engineering
+      collaborators: ["bob"]
+
+tests:
+  - name: Alice is owner of her document
+    input:
+      principals: [alice]
+      resources: [alice_document]
+      actions: [edit, delete]
+    expected:
+      - principal: alice
+        resource: alice_document
+        actions:
+          edit: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+  
+  - name: Bob is collaborator on Alice's document
+    input:
+      principals: [bob]
+      resources: [alice_document]
+      actions: [view, comment]
+    expected:
+      - principal: bob
+        resource: alice_document
+        actions:
+          view: EFFECT_ALLOW
+          comment: EFFECT_ALLOW
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Keep Definitions Focused" icon="target">
+    Each derived role should represent one clear concept ("owner", "manager", "collaborator").
+  </Card>
+  
+  <Card title="Use Descriptive Names" icon="tag">
+    Choose names that clearly indicate when the role applies: `direct_manager`, not just `manager`.
+  </Card>
+  
+  <Card title="Minimize Complexity" icon="diagram-project">
+    Complex conditions in derived roles can be hard to debug. Consider breaking them into variables.
+  </Card>
+  
+  <Card title="Document Prerequisites" icon="book">
+    Use the `description` field to explain what attributes the role expects.
+  </Card>
+</CardGroup>
+
+<Tip>
+  Start with simple ownership-based derived roles, then add more sophisticated roles as needed.
+</Tip>
+
+## Performance Considerations
+
+- Derived roles are evaluated **on every request** that uses them
+- Keep conditions simple and avoid expensive operations
+- Use local variables to avoid repeating complex expressions
+- Consider caching if computing attributes is expensive
+
+```yaml
+# Good: Evaluate once, reuse
+variables:
+  local:
+    is_same_dept: R.attr.department == P.attr.department
+
+definitions:
+  - name: dept_manager
+    parentRoles: ["manager"]
+    condition:
+      match:
+        expr: V.is_same_dept  # Reuse computed variable
+```
+
+## Common Pitfalls
+
+<AccordionGroup>
+  <Accordion title="Forgetting to Import">
+    ```yaml
+    # Wrong: Derived role used but not imported
+    resourcePolicy:
+      resource: document
+      rules:
+        - actions: ["edit"]
+          derivedRoles: ["owner"]  # Error: not imported!
+    
+    # Correct: Import first
+    resourcePolicy:
+      resource: document
+      importDerivedRoles:
+        - common_roles  # Must import the set containing 'owner'
+      rules:
+        - actions: ["edit"]
+          derivedRoles: ["owner"]
+    ```
+  </Accordion>
+  
+  <Accordion title="Wrong Parent Roles">
+    ```yaml
+    # User has roles: ["engineer"]
+    definitions:
+      - name: owner
+        parentRoles: ["user"]  # User doesn't have 'user' role!
+        condition:
+          match:
+            expr: R.attr.owner == P.id
+    
+    # Fix: Match actual roles
+    definitions:
+      - name: owner
+        parentRoles: ["engineer", "manager"]  # Match actual roles
+        # OR use wildcard:
+        parentRoles: ["*"]  # Any role
+    ```
+  </Accordion>
+  
+  <Accordion title="Condition Always False">
+    Check that attribute paths match your request data:
+    
+    ```yaml
+    # If your request has request.resource.attr.ownerId (not owner)
+    definitions:
+      - name: owner
+        parentRoles: ["user"]
+        condition:
+          match:
+            expr: R.attr.owner == P.id  # Wrong attribute name!
+    
+    # Fix:
+    definitions:
+      - name: owner
+        parentRoles: ["user"]
+        condition:
+          match:
+            expr: R.attr.ownerId == P.id  # Match actual attribute
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Debugging Derived Roles
+
+Enable detailed logging to see role evaluation:
+
+```yaml
+# .cerbos.yaml
+server:
+  logLevel: debug
+```
+
+Or use the Cerbos Playground to test role assignments interactively.
+
+## Real-World Example
+
+Here's a complete example for a project management system:
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+description: |
+  Derived roles for project management system.
+  Supports project ownership, team membership, and approval workflows.
+
+derivedRoles:
+  name: project_roles
+  
+  variables:
+    local:
+      is_team_member: P.id in R.attr.team_members
+      is_active_project: R.attr.status in ["active", "planning"]
+      is_overdue: |-
+        has(R.attr.due_date) && 
+        timestamp(R.attr.due_date) < now()
+  
+  definitions:
+    # Project owner: created the project
+    - name: project_owner
+      parentRoles: ["user"]
+      condition:
+        match:
+          expr: R.attr.created_by == P.id
+    
+    # Team member: explicitly added to project team
+    - name: team_member
+      parentRoles: ["user", "contractor"]
+      condition:
+        match:
+          expr: V.is_team_member
+    
+    # Active contributor: team member on active projects
+    - name: active_contributor
+      parentRoles: ["user"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: V.is_team_member
+              - expr: V.is_active_project
+    
+    # Project approver: manager of project owner
+    - name: project_approver
+      parentRoles: ["manager"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: R.attr.created_by in P.attr.direct_reports
+              - expr: R.attr.status == "pending_approval"
+    
+    # Escalation handler: senior manager for overdue high-value projects
+    - name: escalation_handler
+      parentRoles: ["senior_manager"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: V.is_overdue
+              - expr: R.attr.value > 100000
+              - expr: R.attr.business_unit == P.attr.business_unit
+```
+
+Used in resource policy:
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: project
+  version: "default"
+  importDerivedRoles:
+    - project_roles
+  
+  rules:
+    - actions: ["*"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["project_owner"]
+    
+    - actions: ["view", "comment", "update_status"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["team_member"]
+    
+    - actions: ["approve", "reject"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["project_approver"]
+    
+    - actions: ["escalate", "reassign"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["escalation_handler"]
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Conditions" icon="code" href="/policies/conditions">
+    Learn CEL expression syntax
+  </Card>
+  
+  <Card title="Resource Policies" icon="file-shield" href="/policies/resource-policies">
+    Use derived roles in resource policies
+  </Card>
+  
+  <Card title="Testing" icon="flask" href="/policies/testing">
+    Test derived role assignments
+  </Card>
+</CardGroup>

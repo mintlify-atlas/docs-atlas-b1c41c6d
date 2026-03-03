@@ -1,0 +1,949 @@
+---
+title: "Policy Testing"
+description: "Test and verify your Cerbos policies with the compile command and test suites"
+---
+
+## Overview
+
+Testing policies is critical to ensure your authorization logic works as expected. Cerbos provides a comprehensive testing framework that lets you:
+
+- **Validate policy syntax**: Catch errors before deployment
+- **Verify authorization decisions**: Ensure rules produce expected results
+- **Test edge cases**: Cover deny scenarios, conditions, and derived roles
+- **Integrate with CI/CD**: Run tests automatically on every commit
+
+<Note>
+  Policy tests are written in YAML and run with the `cerbos compile` command. They don't require a running Cerbos server.
+</Note>
+
+## The cerbos compile Command
+
+### Basic Usage
+
+```bash
+# Compile policies and run all tests
+cerbos compile /path/to/policies
+
+# Compile without running tests
+cerbos compile --skip-tests /path/to/policies
+
+# Compile with verbose output
+cerbos compile --verbose /path/to/policies
+```
+
+### What It Does
+
+<Steps>
+  <Step title="Load Policies">
+    Loads all policy files from the specified directory.
+  </Step>
+  
+  <Step title="Validate Syntax">
+    Checks YAML syntax and policy structure.
+  </Step>
+  
+  <Step title="Compile Policies">
+    Compiles policies into internal representation, checking:
+    - Schema references are valid
+    - Derived roles are imported correctly
+    - Conditions use valid CEL expressions
+    - Variables and constants are defined
+  </Step>
+  
+  <Step title="Run Tests">
+    Executes test suites and reports results.
+  </Step>
+</Steps>
+
+### Command Options
+
+<ParamField path="--skip-tests" type="boolean">
+  Skip running tests, only validate and compile policies.
+</ParamField>
+
+<ParamField path="--test-filter" type="string">
+  Filter tests by dimensions (suite, test, principal, resource, action).
+  
+  Format: `dimension=glob1,glob2;...`
+  
+  Example: `--test-filter='suite=DocumentTests;principal=alice,bob'`
+</ParamField>
+
+<ParamField path="--verbose" type="boolean">
+  Show detailed output on test failures including full request/response.
+</ParamField>
+
+<ParamField path="--output" type="string" default="tree">
+  Output format: `tree`, `list`, or `json`.
+</ParamField>
+
+<ParamField path="--ignore-schemas" type="boolean">
+  Skip schema validation during compilation.
+</ParamField>
+
+## Test File Structure
+
+Test files are YAML documents that define test suites:
+
+```yaml
+---
+name: DocumentTestSuite
+description: Tests for document resource policy
+
+principals:
+  alice:
+    id: alice
+    roles: ["user"]
+    attr:
+      department: engineering
+  
+  bob:
+    id: bob
+    roles: ["user", "manager"]
+    attr:
+      department: sales
+
+resources:
+  public_doc:
+    kind: document
+    id: doc1
+    attr:
+      owner: alice
+      public: true
+  
+  private_doc:
+    kind: document
+    id: doc2
+    attr:
+      owner: alice
+      public: false
+
+tests:
+  - name: Public documents viewable by all
+    input:
+      principals: [alice, bob]
+      resources: [public_doc]
+      actions: [view]
+    expected:
+      - principal: alice
+        resource: public_doc
+        actions:
+          view: EFFECT_ALLOW
+      
+      - principal: bob
+        resource: public_doc
+        actions:
+          view: EFFECT_ALLOW
+```
+
+### File Location
+
+Test files should be in a `tests/` directory within your policy repository:
+
+```
+policies/
+├── derived_roles/
+│   └── common_roles.yaml
+├── resource_policies/
+│   ├── document.yaml
+│   └── project.yaml
+└── tests/
+    ├── document_test.yaml
+    └── project_test.yaml
+```
+
+## Test Suite Fields
+
+### Suite Metadata
+
+<ParamField path="name" type="string" required>
+  Unique name for this test suite. Used in test output and filtering.
+</ParamField>
+
+<ParamField path="description" type="string">
+  Human-readable description of what this suite tests.
+</ParamField>
+
+### Principals Definition
+
+<ParamField path="principals" type="object" required>
+  Map of principal definitions. Keys are principal identifiers used in tests.
+</ParamField>
+
+```yaml
+principals:
+  alice:
+    id: alice                    # Principal ID (matches policy checks)
+    roles: ["user", "employee"]  # Static roles
+    attr:                        # Custom attributes
+      department: engineering
+      level: 5
+      teams: ["backend", "platform"]
+    scope: "acme.corp"           # Optional scope
+  
+  service_account:
+    id: backup-service
+    roles: ["service"]
+    attr:
+      service_type: backup
+```
+
+### Resources Definition
+
+<ParamField path="resources" type="object" required>
+  Map of resource definitions. Keys are resource identifiers used in tests.
+</ParamField>
+
+```yaml
+resources:
+  alice_document:
+    kind: document               # Resource type
+    id: doc123                   # Resource ID
+    attr:                        # Custom attributes
+      owner: alice
+      department: engineering
+      status: published
+      created_at: "2024-01-15T10:00:00Z"
+    scope: "acme.corp"           # Optional scope
+  
+  shared_project:
+    kind: project
+    id: proj456
+    attr:
+      owner: bob
+      collaborators: ["alice", "charlie"]
+      public: true
+```
+
+### Tests Definition
+
+<ParamField path="tests" type="array" required>
+  List of test cases to execute.
+</ParamField>
+
+Each test specifies:
+
+```yaml
+tests:
+  - name: "Test case name"       # Required: descriptive name
+    skip: false                  # Optional: skip this test
+    skipReason: "Not ready"      # Optional: why test is skipped
+    
+    input:                       # What to test
+      principals: [alice, bob]   # List of principal IDs
+      resources: [doc1, doc2]    # List of resource IDs
+      actions: [view, edit]      # List of actions
+      auxData:                   # Optional: additional data
+        jwt:
+          aud: "my-app"
+    
+    expected:                    # Expected results
+      - principal: alice         # For this principal
+        resource: doc1           # And this resource
+        actions:                 # Expect these results
+          view: EFFECT_ALLOW
+          edit: EFFECT_ALLOW
+```
+
+## Complete Test Example
+
+Here's a comprehensive test suite for a leave request system:
+
+```yaml
+---
+name: LeaveRequestTestSuite
+description: |
+  Tests for leave request resource policy.
+  Covers employee self-service, manager approval, and admin access.
+
+principals:
+  alice:
+    id: alice
+    roles: ["employee"]
+    attr:
+      department: engineering
+      manager: bob
+      geography: US
+  
+  bob:
+    id: bob
+    roles: ["employee", "manager"]
+    attr:
+      department: engineering
+      managed_users: ["alice", "charlie"]
+      geography: US
+  
+  charlie:
+    id: charlie
+    roles: ["employee"]
+    attr:
+      department: sales
+      manager: dave
+      geography: UK
+  
+  admin:
+    id: admin
+    roles: ["admin"]
+
+resources:
+  alice_pending_request:
+    kind: leave_request
+    id: req1
+    attr:
+      owner: alice
+      status: PENDING_APPROVAL
+      department: engineering
+      geography: US
+      days: 5
+  
+  alice_approved_request:
+    kind: leave_request
+    id: req2
+    attr:
+      owner: alice
+      status: APPROVED
+      department: engineering
+      geography: US
+      days: 3
+  
+  charlie_request:
+    kind: leave_request
+    id: req3
+    attr:
+      owner: charlie
+      status: PENDING_APPROVAL
+      department: sales
+      geography: UK
+      days: 10
+
+tests:
+  # Employee can create their own requests
+  - name: Employees can create leave requests
+    input:
+      principals: [alice, charlie]
+      resources: [alice_pending_request, charlie_request]
+      actions: [create]
+    expected:
+      - principal: alice
+        resource: alice_pending_request
+        actions:
+          create: EFFECT_ALLOW
+      
+      - principal: charlie
+        resource: charlie_request
+        actions:
+          create: EFFECT_ALLOW
+  
+  # Employee can view their own requests
+  - name: Employees can view their own requests
+    input:
+      principals: [alice]
+      resources: [alice_pending_request, alice_approved_request]
+      actions: [view]
+    expected:
+      - principal: alice
+        resource: alice_pending_request
+        actions:
+          view: EFFECT_ALLOW
+      
+      - principal: alice
+        resource: alice_approved_request
+        actions:
+          view: EFFECT_ALLOW
+  
+  # Employee cannot view others' requests
+  - name: Employees cannot view other employees requests
+    input:
+      principals: [alice]
+      resources: [charlie_request]
+      actions: [view]
+    expected:
+      - principal: alice
+        resource: charlie_request
+        actions:
+          view: EFFECT_DENY
+  
+  # Manager can approve their reports' requests
+  - name: Managers can approve pending requests from their reports
+    input:
+      principals: [bob]
+      resources: [alice_pending_request]
+      actions: [approve]
+    expected:
+      - principal: bob
+        resource: alice_pending_request
+        actions:
+          approve: EFFECT_ALLOW
+  
+  # Manager cannot approve already approved requests
+  - name: Managers cannot approve already-approved requests
+    input:
+      principals: [bob]
+      resources: [alice_approved_request]
+      actions: [approve]
+    expected:
+      - principal: bob
+        resource: alice_approved_request
+        actions:
+          approve: EFFECT_DENY
+  
+  # Manager cannot approve requests from other departments
+  - name: Managers cannot approve requests outside their geography
+    input:
+      principals: [bob]
+      resources: [charlie_request]
+      actions: [approve]
+    expected:
+      - principal: bob
+        resource: charlie_request
+        actions:
+          approve: EFFECT_DENY
+  
+  # Admin has full access
+  - name: Admins have full access to all requests
+    input:
+      principals: [admin]
+      resources: [alice_pending_request, charlie_request]
+      actions: [view, edit, approve, delete]
+    expected:
+      - principal: admin
+        resource: alice_pending_request
+        actions:
+          view: EFFECT_ALLOW
+          edit: EFFECT_ALLOW
+          approve: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+      
+      - principal: admin
+        resource: charlie_request
+        actions:
+          view: EFFECT_ALLOW
+          edit: EFFECT_ALLOW
+          approve: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+```
+
+## Running Tests
+
+### Run All Tests
+
+```bash
+cerbos compile /path/to/policies
+```
+
+Output:
+```
+Loading policies from /path/to/policies
+Compiling 15 policies...
+✓ All policies compiled successfully
+
+Running tests...
+LeaveRequestTestSuite
+  ✓ Employees can create leave requests
+  ✓ Employees can view their own requests
+  ✓ Employees cannot view other employees requests
+  ✓ Managers can approve pending requests from their reports
+  ✓ Managers cannot approve already-approved requests
+  ✓ Managers cannot approve requests outside their geography
+  ✓ Admins have full access to all requests
+
+7 passed, 0 failed
+```
+
+### Run Specific Tests
+
+Filter by suite name:
+
+```bash
+cerbos compile --test-filter='suite=LeaveRequestTestSuite' /path/to/policies
+```
+
+Filter by test name pattern:
+
+```bash
+cerbos compile --test-filter='test=*Manager*' /path/to/policies
+```
+
+Filter by principal:
+
+```bash
+cerbos compile --test-filter='principal=alice,bob' /path/to/policies
+```
+
+Filter by resource:
+
+```bash
+cerbos compile --test-filter='resource=*_request' /path/to/policies
+```
+
+Filter by action:
+
+```bash
+cerbos compile --test-filter='action=approve,delete' /path/to/policies
+```
+
+Combine filters:
+
+```bash
+cerbos compile --test-filter='suite=Leave*;principal=alice;action=view' /path/to/policies
+```
+
+### Verbose Output
+
+See detailed failure information:
+
+```bash
+cerbos compile --verbose /path/to/policies
+```
+
+Failure output shows:
+- Expected vs actual effects
+- Full request details
+- Which policies were evaluated
+- Derived roles that were activated
+
+## Testing Patterns
+
+### Test Positive Cases
+
+```yaml
+tests:
+  - name: Owner can edit their documents
+    input:
+      principals: [alice]
+      resources: [alice_doc]
+      actions: [edit]
+    expected:
+      - principal: alice
+        resource: alice_doc
+        actions:
+          edit: EFFECT_ALLOW
+```
+
+### Test Negative Cases
+
+```yaml
+tests:
+  - name: Users cannot edit others' documents
+    input:
+      principals: [bob]
+      resources: [alice_doc]
+      actions: [edit]
+    expected:
+      - principal: bob
+        resource: alice_doc
+        actions:
+          edit: EFFECT_DENY
+```
+
+### Test Multiple Principals
+
+```yaml
+tests:
+  - name: All users can view public documents
+    input:
+      principals: [alice, bob, charlie]  # Test multiple principals at once
+      resources: [public_doc]
+      actions: [view]
+    expected:
+      - principal: alice
+        resource: public_doc
+        actions:
+          view: EFFECT_ALLOW
+      
+      - principal: bob
+        resource: public_doc
+        actions:
+          view: EFFECT_ALLOW
+      
+      - principal: charlie
+        resource: public_doc
+        actions:
+          view: EFFECT_ALLOW
+```
+
+### Test Multiple Actions
+
+```yaml
+tests:
+  - name: Admins have full access
+    input:
+      principals: [admin]
+      resources: [document]
+      actions: [view, edit, delete, share]  # Test all actions
+    expected:
+      - principal: admin
+        resource: document
+        actions:
+          view: EFFECT_ALLOW
+          edit: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+          share: EFFECT_ALLOW
+```
+
+### Test Conditions
+
+```yaml
+resources:
+  fresh_doc:
+    kind: document
+    id: doc1
+    attr:
+      created_at: "2024-01-15T10:00:00Z"  # Recent
+  
+  old_doc:
+    kind: document
+    id: doc2
+    attr:
+      created_at: "2020-01-15T10:00:00Z"  # Old
+
+tests:
+  - name: Can only edit documents created in last 30 days
+    input:
+      principals: [alice]
+      resources: [fresh_doc, old_doc]
+      actions: [edit]
+    expected:
+      - principal: alice
+        resource: fresh_doc
+        actions:
+          edit: EFFECT_ALLOW  # Recent document
+      
+      - principal: alice
+        resource: old_doc
+        actions:
+          edit: EFFECT_DENY   # Too old
+```
+
+### Test with Auxiliary Data
+
+```yaml
+tests:
+  - name: JWT authentication required for sensitive actions
+    input:
+      principals: [alice]
+      resources: [sensitive_doc]
+      actions: [delete]
+      auxData:
+        jwt:
+          aud: "admin-app"
+          roles: ["admin"]
+    expected:
+      - principal: alice
+        resource: sensitive_doc
+        actions:
+          delete: EFFECT_ALLOW
+```
+
+## Skipping Tests
+
+Temporarily disable tests:
+
+```yaml
+tests:
+  - name: Feature not implemented yet
+    skip: true
+    skipReason: "Waiting for backend implementation"
+    input:
+      principals: [alice]
+      resources: [doc]
+      actions: [archive]
+    expected:
+      - principal: alice
+        resource: doc
+        actions:
+          archive: EFFECT_ALLOW
+```
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+name: Test Policies
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'policies/**'
+      - 'tests/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Download Cerbos
+        run: |
+          curl -L https://github.com/cerbos/cerbos/releases/latest/download/cerbos_Linux_x86_64.tar.gz | tar xz
+          sudo mv cerbos /usr/local/bin/
+      
+      - name: Compile and test policies
+        run: cerbos compile --verbose policies/
+```
+
+### GitLab CI
+
+```yaml
+test-policies:
+  image: ghcr.io/cerbos/cerbos:latest
+  script:
+    - cerbos compile --verbose policies/
+  only:
+    changes:
+      - policies/**
+      - tests/**
+```
+
+### Pre-commit Hook
+
+```bash
+#!/bin/bash
+# .git/hooks/pre-commit
+
+echo "Testing Cerbos policies..."
+cerbos compile policies/
+
+if [ $? -ne 0 ]; then
+  echo "Policy tests failed. Commit aborted."
+  exit 1
+fi
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Test Both Allow and Deny" icon="scale-balanced">
+    For every ALLOW test, write a corresponding DENY test to ensure policies aren't too permissive.
+  </Card>
+  
+  <Card title="Cover Edge Cases" icon="triangle-exclamation">
+    Test boundary conditions, missing attributes, empty lists, and null values.
+  </Card>
+  
+  <Card title="Use Descriptive Names" icon="tag">
+    Test names should clearly describe what's being tested and the expected outcome.
+  </Card>
+  
+  <Card title="One Concept Per Test" icon="bullseye">
+    Each test should verify one specific behavior. Don't combine unrelated checks.
+  </Card>
+  
+  <Card title="Test Derived Roles" icon="users-gear">
+    Verify that derived roles are assigned correctly by testing actions that depend on them.
+  </Card>
+  
+  <Card title="Keep Tests DRY" icon="repeat">
+    Reuse principal and resource definitions across tests in the same suite.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Test shows ALLOW but I expected DENY">
+    - Check that resource attributes match your policy conditions exactly
+    - Verify principal roles are correct
+    - Look for wildcard rules (`*` in roles or actions)
+    - Check if a principal policy is overriding the resource policy
+  </Accordion>
+  
+  <Accordion title="Test shows DENY but I expected ALLOW">
+    - Verify the principal has the required static or derived roles
+    - Check that conditions evaluate to true with the test data
+    - Ensure derived roles are imported in the resource policy
+    - Check for explicit DENY rules that might be matching
+  </Accordion>
+  
+  <Accordion title="Compilation errors">
+    - Run `cerbos compile --verbose` to see detailed error messages
+    - Check that referenced derived roles exist and are imported
+    - Verify CEL expressions are syntactically correct
+    - Ensure variables and constants are defined before use
+  </Accordion>
+  
+  <Accordion title="Tests not found">
+    - Ensure test files are in the `tests/` directory
+    - Check that test files have `.yaml` extension
+    - Verify test file structure matches the schema
+    - Use `--verbose` to see which test files are loaded
+  </Accordion>
+</AccordionGroup>
+
+## Test Output Formats
+
+### Tree Format (Default)
+
+```bash
+cerbos compile --output=tree /path/to/policies
+```
+
+Shows hierarchical test results:
+
+```
+LeaveRequestTestSuite
+  ✓ Employees can create leave requests
+  ✓ Managers can approve
+  ✗ Failed test name
+    Expected: EFFECT_ALLOW
+    Got: EFFECT_DENY
+```
+
+### List Format
+
+```bash
+cerbos compile --output=list /path/to/policies
+```
+
+Flat list of results:
+
+```
+✓ LeaveRequestTestSuite > Employees can create leave requests
+✓ LeaveRequestTestSuite > Managers can approve
+✗ LeaveRequestTestSuite > Failed test name
+```
+
+### JSON Format
+
+```bash
+cerbos compile --output=json /path/to/policies
+```
+
+Machine-readable JSON output for integration with other tools.
+
+### JUnit Format
+
+```bash
+cerbos compile --test-output=junit /path/to/policies > results.xml
+```
+
+Generates JUnit XML for CI/CD integrations.
+
+## What to Test
+
+<Steps>
+  <Step title="Happy Path">
+    Verify that authorized users can perform expected actions.
+  </Step>
+  
+  <Step title="Unauthorized Access">
+    Verify that unauthorized users are denied access.
+  </Step>
+  
+  <Step title="Role-Based Access">
+    Test that each role has appropriate permissions.
+  </Step>
+  
+  <Step title="Derived Roles">
+    Verify dynamic role assignment based on context.
+  </Step>
+  
+  <Step title="Conditions">
+    Test attribute-based rules with various attribute values.
+  </Step>
+  
+  <Step title="Edge Cases">
+    Test boundary conditions, missing data, and special scenarios.
+  </Step>
+  
+  <Step title="Principal Policies">
+    Verify that principal policies correctly override resource policies.
+  </Step>
+</Steps>
+
+## Example Test Suite
+
+Here's a minimal but comprehensive test suite template:
+
+```yaml
+---
+name: MyResourceTestSuite
+description: Tests for my_resource policy
+
+principals:
+  regular_user:
+    id: user1
+    roles: ["user"]
+  
+  admin_user:
+    id: admin1
+    roles: ["admin"]
+
+resources:
+  user_owned:
+    kind: my_resource
+    id: res1
+    attr:
+      owner: user1
+  
+  other_owned:
+    kind: my_resource
+    id: res2
+    attr:
+      owner: user2
+
+tests:
+  # Positive: Users can access their own resources
+  - name: Users can view their own resources
+    input:
+      principals: [regular_user]
+      resources: [user_owned]
+      actions: [view]
+    expected:
+      - principal: regular_user
+        resource: user_owned
+        actions:
+          view: EFFECT_ALLOW
+  
+  # Negative: Users cannot access others' resources
+  - name: Users cannot view others resources
+    input:
+      principals: [regular_user]
+      resources: [other_owned]
+      actions: [view]
+    expected:
+      - principal: regular_user
+        resource: other_owned
+        actions:
+          view: EFFECT_DENY
+  
+  # Admin: Admins can access all resources
+  - name: Admins can access all resources
+    input:
+      principals: [admin_user]
+      resources: [user_owned, other_owned]
+      actions: [view, edit, delete]
+    expected:
+      - principal: admin_user
+        resource: user_owned
+        actions:
+          view: EFFECT_ALLOW
+          edit: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+      
+      - principal: admin_user
+        resource: other_owned
+        actions:
+          view: EFFECT_ALLOW
+          edit: EFFECT_ALLOW
+          delete: EFFECT_ALLOW
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Resource Policies" icon="file-shield" href="/policies/resource-policies">
+    Learn how to write policies to test
+  </Card>
+  
+  <Card title="Conditions" icon="code" href="/policies/conditions">
+    Test complex conditional logic
+  </Card>
+  
+  <Card title="CI/CD Integration" icon="gears" href="/deployment/ci-cd">
+    Automate policy testing in your pipeline
+  </Card>
+</CardGroup>

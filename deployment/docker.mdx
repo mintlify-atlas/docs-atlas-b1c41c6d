@@ -1,0 +1,769 @@
+---
+title: "Docker Deployment"
+description: "Deploy Cerbos using Docker containers for development and production environments"
+---
+
+Cerbos provides official Docker images for easy deployment in containerized environments.
+
+## Docker Images
+
+Official Cerbos images are available on GitHub Container Registry:
+
+- **Image**: `ghcr.io/cerbos/cerbos`
+- **Tags**: Version tags (e.g., `0.52.0`), `latest`, `dev`
+- **Architecture**: AMD64 and ARM64
+
+## Quick Start
+
+### Basic Container
+
+Run Cerbos with default configuration:
+
+```bash
+docker run -d \
+  --name cerbos \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+### With Custom Policies
+
+Mount a local policies directory:
+
+```bash
+docker run -d \
+  --name cerbos \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  -v $(pwd)/policies:/policies \
+  -e CERBOS_CONFIG=__default__ \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+### With Custom Configuration
+
+Mount a configuration file:
+
+```bash
+docker run -d \
+  --name cerbos \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  -v $(pwd)/config/.cerbos.yaml:/config/.cerbos.yaml \
+  ghcr.io/cerbos/cerbos:latest server --config=/config/.cerbos.yaml
+```
+
+## Dockerfile Details
+
+The official Cerbos Dockerfile:
+
+```dockerfile
+FROM alpine:3.16 AS base
+RUN apk add -U --no-cache ca-certificates && update-ca-certificates
+
+FROM scratch
+ARG TARGETPLATFORM
+EXPOSE 3592 3593
+ENV CERBOS_CONFIG="__default__"
+VOLUME ["/policies", "/tmp", "/.cache"]
+ENTRYpoint ["/cerbos"]
+CMD ["server"]
+HEALTHCHECK --interval=10s --timeout=2s --retries=2 CMD ["/cerbos", "healthcheck"]
+COPY --from=base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY ${TARGETPLATFORM}/cerbos /cerbos
+```
+
+**Key features:**
+- Minimal scratch-based image for security
+- Multi-architecture support (AMD64, ARM64)
+- Built-in health check every 10 seconds
+- Exposed ports: 3592 (HTTP), 3593 (gRPC)
+- Default volumes for policies, temp, and cache
+
+## Ports and Volumes
+
+### Exposed Ports
+
+- **3592**: HTTP API (REST endpoints, health checks, metrics)
+- **3593**: gRPC API (recommended for production)
+
+### Volumes
+
+- `/policies`: Policy files directory
+- `/tmp`: Temporary files and caches
+- `/.cache`: Bundle cache directory (for Hub/remote bundles)
+
+## Environment Variables
+
+### Default Configuration
+
+When `CERBOS_CONFIG=__default__`, Cerbos uses:
+
+```yaml
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /policies
+    watchForChanges: false
+```
+
+### Common Variables
+
+<CodeGroup>
+
+```bash Configuration
+CERBOS_CONFIG=__default__        # Use default config
+CERBOS_LOG_LEVEL=info           # Log level: debug, info, warn, error
+```
+
+```bash Storage
+STORE=disk                      # Storage driver
+```
+
+```bash Audit
+AUDIT_ENABLED=true              # Enable audit logging
+```
+
+```bash Schema
+SCHEMA_ENFORCEMENT=reject       # Schema validation: reject, warn, none
+```
+
+</CodeGroup>
+
+## Docker Compose
+
+### Basic Setup
+
+Create `docker-compose.yml`:
+
+```yaml
+services:
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:latest
+    container_name: cerbos
+    restart: unless-stopped
+    ports:
+      - "3592:3592"
+      - "3593:3593"
+    volumes:
+      - ./policies:/policies
+      - ./config/.cerbos.yaml:/config/.cerbos.yaml
+    command: ["server", "--config=/config/.cerbos.yaml"]
+    healthcheck:
+      test: ["/cerbos", "healthcheck"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+```
+
+Start the service:
+
+```bash
+docker-compose up -d
+```
+
+### Production Setup
+
+A production-ready configuration with monitoring:
+
+```yaml
+services:
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:0.52.0
+    container_name: cerbos
+    restart: always
+    ports:
+      - "3592:3592"
+      - "3593:3593"
+    volumes:
+      - ./config:/conf:ro
+      - ./policies:/policies:ro
+      - ./audit:/audit
+      - cerbos-cache:/.cache
+    command:
+      - "server"
+      - "--config=/conf/.cerbos.yaml"
+      - "--log-level=info"
+    environment:
+      - AUDIT_ENABLED=true
+      - SCHEMA_ENFORCEMENT=reject
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    healthcheck:
+      test: ["/cerbos", "healthcheck"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+      start_period: 5s
+    networks:
+      - cerbos-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - cerbos-network
+    depends_on:
+      - cerbos
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
+      - ./grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - cerbos-network
+    depends_on:
+      - prometheus
+
+volumes:
+  cerbos-cache:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  cerbos-network:
+    driver: bridge
+```
+
+Prometheus configuration (`prometheus/prometheus.yml`):
+
+```yaml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'cerbos'
+    static_configs:
+      - targets: ['cerbos:3592']
+    metrics_path: '/_cerbos/metrics'
+```
+
+### With Database Storage
+
+Using PostgreSQL for policy storage:
+
+```yaml
+services:
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:latest
+    container_name: cerbos
+    restart: always
+    ports:
+      - "3592:3592"
+      - "3593:3593"
+    volumes:
+      - ./config:/conf:ro
+    command: ["server", "--config=/conf/.cerbos.yaml"]
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=cerbos
+      - DB_PASSWORD=cerbos
+      - DB_NAME=cerbos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cerbos-network
+
+  postgres:
+    image: postgres:14-alpine
+    container_name: postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=cerbos
+      - POSTGRES_PASSWORD=cerbos
+      - POSTGRES_DB=cerbos
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cerbos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cerbos-network
+
+volumes:
+  postgres-data:
+
+networks:
+  cerbos-network:
+    driver: bridge
+```
+
+Configuration file for PostgreSQL (`config/.cerbos.yaml`):
+
+```yaml
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+storage:
+  driver: "postgres"
+  postgres:
+    url: "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
+```
+
+## Configuration
+
+### Storage Backends
+
+<CodeGroup>
+
+```yaml Disk Storage
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /policies
+    watchForChanges: true
+```
+
+```yaml Git Storage
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+storage:
+  driver: "git"
+  git:
+    protocol: https
+    url: https://github.com/org/policies.git
+    branch: main
+    checkoutDir: /work
+    updatePollInterval: 60s
+    https:
+      username: ${GITHUB_TOKEN}
+      password: ""
+```
+
+```yaml Cerbos Hub
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+storage:
+  driver: "hub"
+  hub:
+    remote:
+      deploymentID: "${CERBOS_HUB_DEPLOYMENT_ID}"
+```
+
+```yaml PostgreSQL
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+storage:
+  driver: "postgres"
+  postgres:
+    url: "postgresql://user:pass@postgres:5432/cerbos?sslmode=disable"
+```
+
+</CodeGroup>
+
+### TLS Configuration
+
+Enable TLS for secure communication:
+
+```yaml
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+  tls:
+    cert: /certs/server.crt
+    key: /certs/server.key
+    caCert: /certs/ca.crt
+```
+
+Mount certificates:
+
+```bash
+docker run -d \
+  --name cerbos \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  -v $(pwd)/certs:/certs:ro \
+  -v $(pwd)/config/.cerbos.yaml:/config/.cerbos.yaml:ro \
+  ghcr.io/cerbos/cerbos:latest server --config=/config/.cerbos.yaml
+```
+
+### Audit Logging
+
+Enable audit logs:
+
+```yaml
+audit:
+  enabled: true
+  backend: "file"
+  file:
+    path: /audit/audit.log
+    retentionPeriod: 168h  # 7 days
+```
+
+Mount audit directory:
+
+```bash
+docker run -d \
+  --name cerbos \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  -v $(pwd)/audit:/audit \
+  -v $(pwd)/config/.cerbos.yaml:/config/.cerbos.yaml:ro \
+  ghcr.io/cerbos/cerbos:latest server --config=/config/.cerbos.yaml
+```
+
+## Health Checks
+
+### Built-in Health Check
+
+The Docker image includes a health check:
+
+```dockerfile
+HEALTHCHECK --interval=10s --timeout=2s --retries=2 \
+  CMD ["/cerbos", "healthcheck"]
+```
+
+### Manual Health Check
+
+```bash
+# Check container health
+docker inspect --format='{{.State.Health.Status}}' cerbos
+
+# Using curl
+docker exec cerbos /cerbos healthcheck
+
+# HTTP endpoint
+curl http://localhost:3592/_cerbos/health
+```
+
+Expected response:
+```json
+{"status":"SERVING"}
+```
+
+## Resource Limits
+
+### Using Docker Run
+
+```bash
+docker run -d \
+  --name cerbos \
+  --memory="512m" \
+  --cpus="1.0" \
+  --pids-limit=100 \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+### Using Docker Compose
+
+```yaml
+services:
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:latest
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+```
+
+## Networking
+
+### Bridge Network (Default)
+
+```bash
+docker network create cerbos-net
+
+docker run -d \
+  --name cerbos \
+  --network cerbos-net \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+### Host Network
+
+For maximum performance:
+
+```bash
+docker run -d \
+  --name cerbos \
+  --network host \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+<Warning>
+Host networking is only available on Linux and removes network isolation.
+</Warning>
+
+## Security Best Practices
+
+### Run as Non-Root User
+
+The Cerbos image runs as a non-root user by default (scratch-based image).
+
+### Read-Only Root Filesystem
+
+```bash
+docker run -d \
+  --name cerbos \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=100m \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  -v $(pwd)/policies:/policies:ro \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+### Security Options
+
+```bash
+docker run -d \
+  --name cerbos \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges:true \
+  --read-only \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+### Docker Compose Security
+
+```yaml
+services:
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:latest
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+    volumes:
+      - ./policies:/policies:ro
+```
+
+## Monitoring
+
+### Container Stats
+
+```bash
+# Real-time stats
+docker stats cerbos
+
+# Logs
+docker logs -f cerbos
+
+# Specific time range
+docker logs --since 1h cerbos
+```
+
+### Prometheus Metrics
+
+Metrics are exposed at `http://localhost:3592/_cerbos/metrics`:
+
+```bash
+curl http://localhost:3592/_cerbos/metrics
+```
+
+Key metrics:
+- `cerbos_check_duration_seconds`: Authorization check duration
+- `cerbos_check_total`: Total authorization checks
+- `cerbos_policy_repo_load_duration_seconds`: Policy load time
+
+## Troubleshooting
+
+### Container Won't Start
+
+```bash
+# Check logs
+docker logs cerbos
+
+# Inspect container
+docker inspect cerbos
+
+# Run interactively
+docker run -it --rm \
+  -v $(pwd)/config:/config \
+  ghcr.io/cerbos/cerbos:latest server --config=/config/.cerbos.yaml
+```
+
+### Policy Errors
+
+```bash
+# Validate policies before mounting
+docker run --rm \
+  -v $(pwd)/policies:/policies \
+  ghcr.io/cerbos/cerbosctl:latest compile /policies
+
+# Check policy loading
+docker logs cerbos | grep -i policy
+```
+
+### Permission Issues
+
+```bash
+# Check volume permissions
+ls -la policies/
+
+# Fix permissions
+chmod -R 755 policies/
+chmod 644 policies/*.yaml
+```
+
+### Port Conflicts
+
+```bash
+# Check if ports are in use
+lsof -i :3592
+lsof -i :3593
+
+# Use different ports
+docker run -d \
+  --name cerbos \
+  -p 13592:3592 \
+  -p 13593:3593 \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+## Complete Production Example
+
+A complete production setup with all best practices:
+
+```yaml
+services:
+  cerbos:
+    image: ghcr.io/cerbos/cerbos:0.52.0
+    container_name: cerbos-prod
+    restart: always
+    hostname: cerbos
+    
+    # Ports
+    ports:
+      - "3592:3592"
+      - "3593:3593"
+    
+    # Volumes
+    volumes:
+      - ./config/.cerbos.yaml:/config/.cerbos.yaml:ro
+      - ./policies:/policies:ro
+      - ./certs:/certs:ro
+      - ./audit:/audit
+      - cerbos-cache:/.cache
+    
+    # Command
+    command:
+      - "server"
+      - "--config=/config/.cerbos.yaml"
+      - "--log-level=info"
+    
+    # Environment
+    environment:
+      - AUDIT_ENABLED=true
+      - SCHEMA_ENFORCEMENT=reject
+    
+    # Security
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+    
+    # Resources
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    
+    # Health check
+    healthcheck:
+      test: ["/cerbos", "healthcheck"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+      start_period: 5s
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Network
+    networks:
+      - cerbos-network
+
+volumes:
+  cerbos-cache:
+    driver: local
+
+networks:
+  cerbos-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+```
+
+This configuration provides:
+- Automatic restarts and health checks
+- Resource limits and security hardening
+- Persistent cache and audit logs
+- Proper logging and monitoring
+- Network isolation

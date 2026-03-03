@@ -1,0 +1,378 @@
+---
+title: CheckResources API
+description: Check a principal's permissions to a batch of heterogeneous resources and actions
+---
+
+The CheckResources API is the primary authorization endpoint for checking whether a principal has permission to perform specific actions on resources. It supports checking multiple resources and actions in a single request.
+
+## Endpoint
+
+<CodeGroup>
+```text gRPC
+rpc CheckResources(CheckResourcesRequest) returns (CheckResourcesResponse)
+```
+
+```text REST
+POST /api/check/resources
+```
+</CodeGroup>
+
+## Request Parameters
+
+<ParamField path="requestId" type="string">
+  Optional application-specific ID useful for correlating logs for analysis.
+  
+  Example: `"c2db17b8-4f9f-4fb1-acfd-9162a02be42b"`
+</ParamField>
+
+<ParamField path="includeMeta" type="boolean">
+  Add request processing metadata to the response. When true, the response includes information about which policies matched and which derived roles were effective.
+</ParamField>
+
+<ParamField path="principal" type="object" required>
+  A person or application attempting to perform the actions on the set of resources.
+  
+  <Expandable title="Principal fields">
+    <ParamField path="id" type="string" required>
+      ID of the principal.
+      
+      Example: `"alicia"`
+    </ParamField>
+    
+    <ParamField path="roles" type="string[]" required>
+      Roles assigned to this principal from your identity management system. Must contain at least one role.
+      
+      Example: `["user"]`
+    </ParamField>
+    
+    <ParamField path="attr" type="object">
+      Key-value pairs of contextual data about this principal that should be used during policy evaluation.
+      
+      Example: `{"beta_tester": true}`
+    </ParamField>
+    
+    <ParamField path="policyVersion" type="string">
+      The policy version to use to evaluate this request. If not specified, will default to the server-configured default version.
+      
+      Example: `"default"`
+    </ParamField>
+    
+    <ParamField path="scope" type="string">
+      A dot-separated scope that describes the hierarchy this principal belongs to. This is used for determining policy inheritance.
+      
+      Example: `"acme.corp"`
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="resources" type="object[]" required>
+  List of resources and actions to check. Must contain at least one resource.
+  
+  <Expandable title="Resource entry fields">
+    <ParamField path="actions" type="string[]" required>
+      List of actions being performed on the resource. Must contain at least one action and all actions must be unique.
+      
+      Example: `["view", "delete"]`
+    </ParamField>
+    
+    <ParamField path="resource" type="object" required>
+      The resource to check permissions for.
+      
+      <Expandable title="Resource fields">
+        <ParamField path="kind" type="string" required>
+          Name of the resource kind being accessed.
+          
+          Example: `"album:object"`
+        </ParamField>
+        
+        <ParamField path="id" type="string" required>
+          ID of the resource instance.
+          
+          Example: `"XX125"`
+        </ParamField>
+        
+        <ParamField path="attr" type="object">
+          Key-value pairs of contextual data about this resource that should be used during policy evaluation.
+          
+          Example: `{"owner": "alicia", "public": false}`
+        </ParamField>
+        
+        <ParamField path="policyVersion" type="string">
+          The policy version to use to evaluate this request. If not specified, will default to the server-configured default version.
+          
+          Example: `"default"`
+        </ParamField>
+        
+        <ParamField path="scope" type="string">
+          A dot-separated scope that describes the hierarchy this resource belongs to. This is used for determining policy inheritance.
+          
+          Example: `"acme.corp"`
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="auxData" type="object">
+  Structured auxiliary data useful for evaluating the request.
+  
+  <Expandable title="AuxData fields">
+    <ParamField path="jwt" type="object">
+      JWT from the original request.
+      
+      <Expandable title="JWT fields">
+        <ParamField path="token" type="string" required>
+          JWT from the original request.
+        </ParamField>
+        
+        <ParamField path="keySetId" type="string">
+          Key ID to use when decoding the token (defined in the Cerbos server configuration).
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Response Fields
+
+<ResponseField name="requestId" type="string">
+  Request ID provided in the request.
+  
+  Example: `"c2db17b8-4f9f-4fb1-acfd-9162a02be42b"`
+</ResponseField>
+
+<ResponseField name="results" type="object[]">
+  Result for each resource.
+  
+  <Expandable title="Result entry fields">
+    <ResponseField name="resource" type="object">
+      Information about the resource that was checked.
+      
+      <Expandable title="Resource fields">
+        <ResponseField name="id" type="string">
+          ID of the resource instance.
+          
+          Example: `"XX125"`
+        </ResponseField>
+        
+        <ResponseField name="kind" type="string">
+          Name of the resource kind being accessed.
+          
+          Example: `"album:object"`
+        </ResponseField>
+        
+        <ResponseField name="policyVersion" type="string">
+          The policy version used to evaluate this request.
+          
+          Example: `"default"`
+        </ResponseField>
+        
+        <ResponseField name="scope" type="string">
+          The scope that was used for this resource.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="actions" type="object">
+      Mapping of each action to an effect. Each key is an action name, and the value is either `EFFECT_ALLOW` or `EFFECT_DENY`.
+      
+      Example: `{"view": "EFFECT_ALLOW", "delete": "EFFECT_DENY"}`
+    </ResponseField>
+    
+    <ResponseField name="validationErrors" type="object[]">
+      List of validation errors (if schema validation is enabled).
+    </ResponseField>
+    
+    <ResponseField name="meta" type="object">
+      Metadata about policy evaluation (only included if `includeMeta` was set to true in the request).
+      
+      <Expandable title="Meta fields">
+        <ResponseField name="actions" type="object">
+          Metadata about the effect calculated for each action on this resource instance.
+          
+          <Expandable title="Effect metadata">
+            <ResponseField name="matchedPolicy" type="string">
+              Policy that matched to produce this effect.
+              
+              Example: `"resource.album_object.vdefault"`
+            </ResponseField>
+            
+            <ResponseField name="matchedScope" type="string">
+              Policy scope that matched to produce this effect.
+              
+              Example: `"acme.corp.base"`
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+        
+        <ResponseField name="effectiveDerivedRoles" type="string[]">
+          Derived roles that were effective during policy evaluation.
+          
+          Example: `["owner"]`
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="outputs" type="object[]">
+      Output for each rule with outputs configured.
+      
+      <Expandable title="Output entry fields">
+        <ResponseField name="src" type="string">
+          Rule that matched to produce this output.
+          
+          Example: `"resource.expense.v1/acme#rule-001"`
+        </ResponseField>
+        
+        <ResponseField name="val" type="any">
+          Dynamic output, determined by user defined rule output.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="cerbosCallId" type="string">
+  Audit log call ID associated with this request.
+</ResponseField>
+
+## Example
+
+<CodeGroup>
+```bash cURL
+cat <<EOF | curl --silent "http://localhost:3592/api/check/resources?pretty" -d @-
+{
+  "requestId": "test01",
+  "includeMeta": true,
+  "principal": {
+    "id": "alicia",
+    "roles": [
+      "user"
+    ]
+  },
+  "resources": [
+    {
+      "actions": [
+        "view"
+      ],
+      "resource": {
+        "id": "XX125",
+        "kind": "album:object",
+        "attr": {
+          "owner": "alicia",
+          "public": false,
+          "flagged": false
+        }
+      }
+    }
+  ]
+}
+EOF
+```
+
+```json Response
+{
+  "requestId": "test01",
+  "results": [
+    {
+      "resource": {
+        "id": "XX125",
+        "kind": "album:object",
+        "policyVersion": "default"
+      },
+      "actions": {
+        "view": "EFFECT_ALLOW"
+      },
+      "meta": {
+        "actions": {
+          "view": {
+            "matchedPolicy": "resource.album_object.vdefault"
+          }
+        },
+        "effectiveDerivedRoles": [
+          "owner"
+        ]
+      }
+    }
+  ]
+}
+```
+</CodeGroup>
+
+## Use Cases
+
+### Single Resource Check
+
+The most common use case is checking if a user can perform actions on a single resource:
+
+```json
+{
+  "principal": {
+    "id": "user123",
+    "roles": ["user"]
+  },
+  "resources": [
+    {
+      "actions": ["view", "edit", "delete"],
+      "resource": {
+        "kind": "document",
+        "id": "doc456",
+        "attr": {
+          "owner": "user123"
+        }
+      }
+    }
+  ]
+}
+```
+
+### Batch Resource Check
+
+You can check permissions for multiple heterogeneous resources in a single request:
+
+```json
+{
+  "principal": {
+    "id": "user123",
+    "roles": ["user"]
+  },
+  "resources": [
+    {
+      "actions": ["view"],
+      "resource": {
+        "kind": "document",
+        "id": "doc456"
+      }
+    },
+    {
+      "actions": ["approve"],
+      "resource": {
+        "kind": "expense",
+        "id": "exp789"
+      }
+    }
+  ]
+}
+```
+
+### With Metadata
+
+Request metadata to understand which policies matched:
+
+```json
+{
+  "includeMeta": true,
+  "principal": {
+    "id": "user123",
+    "roles": ["user"]
+  },
+  "resources": [
+    {
+      "actions": ["view"],
+      "resource": {
+        "kind": "document",
+        "id": "doc456"
+      }
+    }
+  ]
+}
+```

@@ -1,0 +1,567 @@
+---
+title: Performance Tuning and Optimization
+description: Optimize Cerbos performance for high-throughput production workloads with caching, batching, and tuning strategies
+---
+
+This guide covers performance optimization strategies for Cerbos deployments, including caching, request batching, resource tuning, and monitoring.
+
+## Performance Overview
+
+Cerbos is designed for high-performance authorization with typical latencies:
+
+- **P50 latency**: < 5ms for cached policy evaluations
+- **P95 latency**: < 20ms for most workloads
+- **P99 latency**: < 50ms with warm cache
+- **Throughput**: 10,000+ requests/second per instance
+
+<Note>
+Actual performance depends on policy complexity, storage backend, caching configuration, and hardware resources.
+</Note>
+
+## Caching Strategy
+
+Cerbos maintains an in-memory cache of compiled policies for fast evaluation.
+
+### Policy Cache Metrics
+
+Monitor cache effectiveness:
+
+```promql
+# Cache hit rate (should be > 95%)
+sum(rate(cerbos_dev_cache_access_count{result="hit"}[5m])) / 
+sum(rate(cerbos_dev_cache_access_count[5m]))
+
+# Cache size
+cerbos_dev_cache_live_objects
+
+# Cache capacity
+cerbos_dev_cache_max_size
+```
+
+### Cache Warming
+
+Cerbos automatically caches policies on first access. For predictable performance:
+
+1. **Pre-load common policies** after startup
+2. **Monitor cache miss rate** during deployment
+3. **Ensure sufficient cache capacity** for all active policies
+
+### Policy Compilation Performance
+
+Policy compilation happens once per policy update:
+
+```promql
+# Compilation time
+histogram_quantile(0.95, rate(cerbos_dev_compiler_compile_duration_bucket[5m]))
+```
+
+**Optimization:**
+- Keep policies modular and focused
+- Avoid overly complex condition expressions
+- Use derived roles to reduce duplication
+
+## Request Batching
+
+Batch multiple authorization checks in a single request to reduce network overhead.
+
+### Batch Size Configuration
+
+```yaml
+server:
+  requestLimits:
+    maxActionsPerResource: 50
+    maxResourcesPerRequest: 50
+```
+
+### Batch Size Monitoring
+
+```promql
+# Average batch size
+sum(rate(cerbos_dev_engine_check_batch_size_sum[5m])) /
+sum(rate(cerbos_dev_engine_check_batch_size_count[5m]))
+
+# Batch size distribution
+cerbos_dev_engine_check_batch_size_bucket
+```
+
+### Batching Best Practices
+
+<AccordionGroup>
+  <Accordion title="Optimal Batch Sizes">
+    **Small Batches (1-10 resources):**
+    - Lower latency per decision
+    - Better for real-time UI authorization
+    - Use for critical path operations
+    
+    **Medium Batches (10-30 resources):**
+    - Balanced latency and throughput
+    - Ideal for list views, bulk operations
+    - Good default for most applications
+    
+    **Large Batches (30-50 resources):**
+    - Maximum throughput
+    - Higher total latency
+    - Use for background processing, reports
+  </Accordion>
+
+  <Accordion title="Client-Side Batching Strategy">
+    ```go
+    // Collect authorization checks
+    batch := make([]*cerbos.ResourceEntry, 0, 20)
+    
+    for _, item := range items {
+        batch = append(batch, &cerbos.ResourceEntry{
+            Resource: &cerbos.Resource{
+                Kind: "document",
+                Id:   item.ID,
+            },
+            Actions: []string{"view", "edit", "delete"},
+        })
+    }
+    
+    // Send single batched request
+    resp, err := client.CheckResources(ctx, principal, batch)
+    ```
+  </Accordion>
+
+  <Accordion title="Adaptive Batching">
+    Dynamically adjust batch size based on latency:
+    
+    ```python
+    class AdaptiveBatcher:
+        def __init__(self, target_latency_ms=10):
+            self.batch_size = 10
+            self.target_latency = target_latency_ms
+        
+        def adjust(self, actual_latency_ms):
+            if actual_latency_ms > self.target_latency * 1.5:
+                # Reduce batch size
+                self.batch_size = max(1, self.batch_size - 5)
+            elif actual_latency_ms < self.target_latency * 0.7:
+                # Increase batch size
+                self.batch_size = min(50, self.batch_size + 5)
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## gRPC Configuration
+
+### Connection Settings
+
+```yaml
+server:
+  advanced:
+    grpc:
+      maxConcurrentStreams: 100
+      connectionTimeout: 120s
+      maxConnectionAge: 300s
+      maxRecvMsgSizeBytes: 4194304  # 4MB
+```
+
+**Parameter Tuning:**
+
+| Parameter | Default | Recommended | Impact |
+|-----------|---------|-------------|--------|
+| `maxConcurrentStreams` | 100 | 100-500 | Concurrent requests per connection |
+| `connectionTimeout` | 120s | 60-120s | Time to establish connection |
+| `maxConnectionAge` | - | 300s | Force connection refresh |
+| `maxRecvMsgSizeBytes` | 4MB | 4-8MB | Maximum request size |
+
+### Client-Side Connection Pooling
+
+```go
+// Go example with connection pooling
+import "google.golang.org/grpc"
+
+conn, err := grpc.Dial(
+    "cerbos:3593",
+    grpc.WithTransportCredentials(creds),
+    grpc.WithKeepaliveParams(keepalive.ClientParameters{
+        Time:                10 * time.Second,
+        Timeout:             3 * time.Second,
+        PermitWithoutStream: true,
+    }),
+    grpc.WithDefaultCallOptions(
+        grpc.MaxCallRecvMsgSize(8 * 1024 * 1024),
+    ),
+)
+```
+
+## HTTP Configuration
+
+```yaml
+server:
+  advanced:
+    http:
+      readTimeout: 30s
+      readHeaderTimeout: 10s
+      writeTimeout: 30s
+      idleTimeout: 90s
+```
+
+**Timeout Tuning:**
+- `readHeaderTimeout`: Should be < connection establishment time
+- `readTimeout`: Must accommodate largest request processing
+- `writeTimeout`: Must accommodate largest response
+- `idleTimeout`: Balance connection reuse vs resource consumption
+
+## Storage Backend Optimization
+
+### Git Storage Performance
+
+```yaml
+storage:
+  driver: git
+  git:
+    updatePollInterval: 60s  # Reduce for faster updates
+    checkoutTimeout: 30s
+```
+
+**Best Practices:**
+- Use shallow clones for large repositories
+- Minimize policy file count via consolidation
+- Use local caching proxies for remote repositories
+
+### Database Storage Performance
+
+```yaml
+storage:
+  driver: postgres
+  postgres:
+    url: "postgresql://user:pass@localhost/cerbos"
+    connPool:
+      maxOpen: 25
+      maxIdle: 10
+      maxLifetime: 300s
+      maxIdleTime: 60s
+    connRetry:
+      maxAttempts: 3
+      initialInterval: 1s
+      maxInterval: 60s
+```
+
+**Connection Pool Sizing:**
+
+```
+maxOpen = (number of CPU cores * 2) + effective_spindle_count
+maxIdle = maxOpen / 2
+```
+
+For Cerbos (read-heavy workload):
+- **Small deployment**: maxOpen=10, maxIdle=5
+- **Medium deployment**: maxOpen=25, maxIdle=10
+- **Large deployment**: maxOpen=50, maxIdle=20
+
+### Blob Storage Performance
+
+```yaml
+storage:
+  driver: blob
+  blob:
+    bucket: s3://cerbos-policies?region=us-east-1
+    updatePollInterval: 60s
+    downloadTimeout: 30s
+```
+
+**Optimization:**
+- Use regional endpoints to reduce latency
+- Enable CloudFront or CDN for global deployments
+- Implement retry logic with exponential backoff
+
+## Resource Limits
+
+### Request Size Limits
+
+```yaml
+server:
+  requestLimits:
+    maxActionsPerResource: 50
+    maxResourcesPerRequest: 50
+```
+
+**Tuning Guidelines:**
+
+```promql
+# Monitor actual batch sizes
+histogram_quantile(0.95, 
+  rate(cerbos_dev_engine_check_batch_size_bucket[5m])
+)
+```
+
+Increase limits if P95 batch size approaches current limit.
+
+### Memory Management
+
+**Estimate memory requirements:**
+
+```
+Base memory: 100MB
++ (Number of policies × 1MB)  # Compiled policy cache
++ (Request rate × 10KB)        # In-flight requests
++ (Audit buffer × 1KB)         # Audit log buffer
+```
+
+**Example:**
+- 500 policies
+- 1000 req/s
+- Audit enabled
+
+```
+100MB + (500 × 1MB) + (1000 × 10KB) + (256 × 1KB) ≈ 610MB
+```
+
+Allocate 2-3x for headroom: **1.5-2GB recommended**
+
+## Container Resource Limits
+
+### Kubernetes Resources
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: cerbos
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+```
+
+**Sizing Guide:**
+
+| Workload | CPU Request | CPU Limit | Memory Request | Memory Limit |
+|----------|-------------|-----------|----------------|-------------|
+| Small (< 100 req/s) | 100m | 500m | 256Mi | 512Mi |
+| Medium (100-1000 req/s) | 250m | 2000m | 512Mi | 2Gi |
+| Large (> 1000 req/s) | 1000m | 4000m | 1Gi | 4Gi |
+
+### Horizontal Pod Autoscaling
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cerbos
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cerbos
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Pods
+      pods:
+        metric:
+          name: cerbos_dev_engine_check_latency_p95
+        target:
+          type: AverageValue
+          averageValue: "20"
+```
+
+## Network Optimization
+
+### Keep-Alive Configuration
+
+Enable TCP keep-alive to detect and recycle stale connections:
+
+```yaml
+server:
+  advanced:
+    grpc:
+      maxConnectionAge: 300s  # Recycle connections every 5 min
+```
+
+### Connection Reuse
+
+Clients should reuse connections:
+
+```python
+# Python example - create client once
+client = CerbosClient(
+    host="cerbos:3593",
+    # Connection pooling enabled by default
+)
+
+# Reuse for all requests
+for item in items:
+    result = client.check_resource(...)
+```
+
+## Latency Optimization
+
+### Target Latency SLOs
+
+```promql
+# P50 latency < 5ms
+histogram_quantile(0.50, 
+  rate(cerbos_dev_engine_check_latency_bucket[5m])
+) < 5
+
+# P95 latency < 20ms
+histogram_quantile(0.95, 
+  rate(cerbos_dev_engine_check_latency_bucket[5m])
+) < 20
+
+# P99 latency < 50ms
+histogram_quantile(0.99, 
+  rate(cerbos_dev_engine_check_latency_bucket[5m])
+) < 50
+```
+
+### Latency Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="High P50 Latency (> 10ms)">
+    **Possible Causes:**
+    - Cache misses (check `cerbos_dev_cache_access_count`)
+    - Complex policy conditions
+    - Slow storage backend
+    
+    **Solutions:**
+    - Warm cache during startup
+    - Simplify policy logic
+    - Optimize storage backend (see Storage section)
+    - Ensure adequate CPU allocation
+  </Accordion>
+
+  <Accordion title="High P95/P99 Latency">
+    **Possible Causes:**
+    - Occasional cache evictions
+    - GC pauses
+    - Network congestion
+    - Resource contention
+    
+    **Solutions:**
+    - Increase memory allocation
+    - Monitor GC metrics: `go_gc_duration_seconds`
+    - Check network latency to storage
+    - Review resource limits
+  </Accordion>
+
+  <Accordion title="Increasing Latency Over Time">
+    **Possible Causes:**
+    - Memory pressure
+    - Growing policy count
+    - Storage performance degradation
+    
+    **Solutions:**
+    - Monitor memory usage trends
+    - Implement policy archival strategy
+    - Investigate storage backend health
+    - Check for connection leaks
+  </Accordion>
+</AccordionGroup>
+
+## Policy Design for Performance
+
+### Efficient Policy Patterns
+
+**Good - Simple conditions:**
+```yaml
+rules:
+  - actions: ['view']
+    effect: EFFECT_ALLOW
+    roles: ['viewer', 'editor']
+```
+
+**Good - Indexed attribute checks:**
+```yaml
+condition:
+  match:
+    expr: P.attr.department == R.attr.department
+```
+
+**Avoid - Complex nested conditions:**
+```yaml
+condition:
+  match:
+    all:
+      of:
+        - expr: complexFunction(P, R)
+        - any:
+            of:
+              - expr: nestedCheck1()
+              - expr: nestedCheck2()
+```
+
+### Derived Roles Optimization
+
+Use derived roles to reduce policy duplication:
+
+```yaml
+# Instead of repeating complex conditions
+derivedRoles:
+  name: common_roles
+  definitions:
+    - name: resource_owner
+      parentRoles: ['user']
+      condition:
+        match:
+          expr: P.id == R.attr.ownerId
+```
+
+## Benchmarking
+
+### Load Testing
+
+Use `ghz` for gRPC load testing:
+
+```bash
+ghz --insecure \
+  --proto cerbos/svc/v1/svc.proto \
+  --call cerbos.svc.v1.CerbosService/CheckResources \
+  -d '{"principal":{...},"resources":[...]}' \
+  -c 50 \
+  -n 10000 \
+  localhost:3593
+```
+
+### Performance Testing Checklist
+
+- [ ] Test with production-like policy count
+- [ ] Use realistic batch sizes
+- [ ] Warm cache before benchmarking
+- [ ] Test with concurrent clients
+- [ ] Monitor resource usage during test
+- [ ] Measure P50, P95, P99 latencies
+- [ ] Verify cache hit rates
+- [ ] Test storage backend separately
+
+## Performance Monitoring Dashboard
+
+```promql
+# Key metrics for performance dashboard
+
+# Request rate
+sum(rate(cerbos_dev_engine_check_latency_count[5m]))
+
+# Latency percentiles
+histogram_quantile(0.50, rate(cerbos_dev_engine_check_latency_bucket[5m]))
+histogram_quantile(0.95, rate(cerbos_dev_engine_check_latency_bucket[5m]))
+histogram_quantile(0.99, rate(cerbos_dev_engine_check_latency_bucket[5m]))
+
+# Cache performance
+sum(rate(cerbos_dev_cache_access_count{result="hit"}[5m])) / 
+sum(rate(cerbos_dev_cache_access_count[5m]))
+
+# Resource usage
+rate(process_cpu_seconds_total[5m])
+process_resident_memory_bytes
+
+# Storage health
+cerbos_dev_store_sync_error_count
+time() - cerbos_dev_store_last_successful_refresh
+```

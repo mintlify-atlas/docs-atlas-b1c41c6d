@@ -1,0 +1,322 @@
+---
+title: "Binary Installation"
+description: "Install Cerbos from pre-compiled binaries and OS packages"
+---
+
+Cerbos provides pre-compiled binaries and native packages for multiple operating systems and architectures. All releases are available on the [GitHub releases page](https://github.com/cerbos/cerbos/releases).
+
+## Supported Platforms
+
+Cerbos binaries are available for:
+
+| OS | Architecture | Bundle Format |
+|-----|-------------|---------------|
+| Linux | x86-64 | `cerbos_VERSION_Linux_x86_64.tar.gz` |
+| Linux | arm64 | `cerbos_VERSION_Linux_arm64.tar.gz` |
+| macOS | Universal | `cerbos_VERSION_Darwin_all.tar.gz` |
+| macOS | x86-64 | `cerbos_VERSION_Darwin_x86_64.tar.gz` |
+| macOS | arm64 | `cerbos_VERSION_Darwin_arm64.tar.gz` |
+
+## Download and Install Binary
+
+<Steps>
+
+<Step title="Download the binary">
+Download the appropriate bundle for your platform:
+
+<CodeGroup>
+
+```bash Linux x86-64
+curl -L -o cerbos.tar.gz "https://github.com/cerbos/cerbos/releases/download/v0.52.0/cerbos_0.52.0_Linux_x86_64.tar.gz"
+```
+
+```bash Linux arm64
+curl -L -o cerbos.tar.gz "https://github.com/cerbos/cerbos/releases/download/v0.52.0/cerbos_0.52.0_Linux_arm64.tar.gz"
+```
+
+```bash macOS Universal
+curl -L -o cerbos.tar.gz "https://github.com/cerbos/cerbos/releases/download/v0.52.0/cerbos_0.52.0_Darwin_all.tar.gz"
+```
+
+```bash macOS arm64
+curl -L -o cerbos.tar.gz "https://github.com/cerbos/cerbos/releases/download/v0.52.0/cerbos_0.52.0_Darwin_arm64.tar.gz"
+```
+
+</CodeGroup>
+</Step>
+
+<Step title="Extract the archive">
+Extract and make the binary executable:
+
+```bash
+tar xvf cerbos.tar.gz
+chmod +x cerbos
+```
+</Step>
+
+<Step title="Move to PATH (optional)">
+Move the binary to a directory in your PATH:
+
+```bash
+sudo mv cerbos /usr/local/bin/
+```
+</Step>
+
+<Step title="Verify installation">
+Check the installed version:
+
+```bash
+cerbos version
+```
+</Step>
+
+</Steps>
+
+## Binary Verification
+
+All Cerbos binaries are signed using [Sigstore](https://www.sigstore.dev) during the automated build process. Each release includes a `.sigstore.json` verification bundle.
+
+<Steps>
+
+<Step title="Download binary and verification bundle">
+```bash
+# Download the binary archive
+curl -L -o cerbos_0.52.0_Linux_x86_64.tar.gz \
+  "https://github.com/cerbos/cerbos/releases/download/v0.52.0/cerbos_0.52.0_Linux_x86_64.tar.gz"
+
+# Download the verification bundle
+curl -L -o cerbos_0.52.0_Linux_x86_64.tar.gz.sigstore.json \
+  "https://github.com/cerbos/cerbos/releases/download/v0.52.0/cerbos_0.52.0_Linux_x86_64.tar.gz.sigstore.json"
+```
+</Step>
+
+<Step title="Verify the signature">
+```bash
+cosign verify-blob \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --certificate-identity="https://github.com/cerbos/cerbos/.github/workflows/release.yaml@refs/tags/v0.52.0" \
+  --bundle="cerbos_0.52.0_Linux_x86_64.tar.gz.sigstore.json" \
+  "cerbos_0.52.0_Linux_x86_64.tar.gz"
+```
+</Step>
+
+</Steps>
+
+## Linux Packages
+
+Cerbos provides native DEB and RPM packages for Linux distributions.
+
+<Note>
+Packages require `systemd` as the init system. For other init systems, install from the tarball instead.
+</Note>
+
+### Package Installation
+
+<CodeGroup>
+
+```bash Debian/Ubuntu
+# Download the package
+curl -L -O "https://github.com/cerbos/cerbos/releases/download/v0.52.0/cerbos_0.52.0_Linux_x86_64.deb"
+
+# Install
+sudo dpkg -i cerbos_0.52.0_Linux_x86_64.deb
+```
+
+```bash RHEL/CentOS/Fedora
+# Download the package
+curl -L -O "https://github.com/cerbos/cerbos/releases/download/v0.52.0/cerbos_0.52.0_Linux_x86_64.rpm"
+
+# Install
+sudo rpm -i cerbos_0.52.0_Linux_x86_64.rpm
+```
+
+</CodeGroup>
+
+### What Gets Installed
+
+The packages install:
+
+- **Binaries**: `cerbos` and `cerbosctl` in `/usr/local/bin`
+- **Configuration**: Default config at `/etc/cerbos.yaml`
+- **Policy Directory**: `/var/cerbos/policies`
+- **Systemd Service**: `cerbos.service` with automatic startup
+
+### Default Configuration
+
+The default configuration (`/etc/cerbos.yaml`):
+
+```yaml
+server:
+  httpListenAddr: ":3592"
+  grpcListenAddr: ":3593"
+
+engine:
+  defaultPolicyVersion: "default"
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /var/cerbos/policies
+    watchForChanges: true
+```
+
+### Managing the Service
+
+<CodeGroup>
+
+```bash Check Status
+sudo systemctl status cerbos
+```
+
+```bash Restart Service
+sudo systemctl restart cerbos
+```
+
+```bash View Logs
+sudo journalctl -xeu cerbos.service
+```
+
+```bash Enable on Boot
+sudo systemctl enable cerbos
+```
+
+```bash Disable Service
+sudo systemctl disable cerbos
+```
+
+</CodeGroup>
+
+### Systemd Service Details
+
+The service file (`/etc/systemd/system/cerbos.service`):
+
+```ini
+[Unit]
+Description=Cerbos Policy Decision Point
+
+[Service]
+ExecStart=/usr/local/bin/cerbos server --config=/etc/cerbos.yaml
+ProtectSystem=full
+ProtectHome=true
+PrivateUsers=true
+PrivateTmp=true
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Homebrew (macOS)
+
+Install Cerbos using Homebrew:
+
+<Steps>
+
+<Step title="Add the Cerbos tap">
+```bash
+brew tap cerbos/tap
+```
+</Step>
+
+<Step title="Install Cerbos">
+```bash
+brew install cerbos
+```
+</Step>
+
+<Step title="Verify installation">
+```bash
+cerbos version
+```
+</Step>
+
+</Steps>
+
+### Update via Homebrew
+
+```bash
+brew upgrade cerbos
+```
+
+## npm Package
+
+Install Cerbos binaries via npm for JavaScript/TypeScript projects. This allows version locking and eliminates separate setup steps.
+
+<CodeGroup>
+
+```bash npm
+npm install --save-dev cerbos cerbosctl
+```
+
+```bash yarn
+yarn add --dev cerbos cerbosctl
+```
+
+```bash pnpm
+pnpm add --save-dev cerbos cerbosctl
+```
+
+</CodeGroup>
+
+<Note>
+Do not use the `--no-optional` flag with npm, as the packages rely on platform-specific optional dependencies.
+</Note>
+
+### Using npm Packages
+
+Packages are available separately:
+
+- [`cerbos`](https://www.npmjs.com/package/cerbos) - Cerbos PDP server
+- [`cerbosctl`](https://www.npmjs.com/package/cerbosctl) - Cerbos CLI tool
+
+Run the binaries via npx:
+
+```bash
+npx cerbos server --config=.cerbos.yaml
+npx cerbosctl version
+```
+
+## Nix Flake
+
+A Nix flake is available at [github:cerbos/cerbos-flake](https://github.com/cerbos/cerbos-flake).
+
+<CodeGroup>
+
+```bash Run Server
+nix run github:cerbos/cerbos-flake#cerbos -- server --set=storage.disk.directory=/path/to/policies
+```
+
+```bash Run REPL
+nix run github:cerbos/cerbos-flake#cerbos -- repl
+```
+
+```bash Run cerbosctl
+nix run github:cerbos/cerbos-flake#cerbosctl
+```
+
+```bash Nix Shell
+nix shell github:cerbos/cerbos-flake
+```
+
+</CodeGroup>
+
+## Running Cerbos
+
+After installation, start the Cerbos server:
+
+```bash
+cerbos server --config=/path/to/config.yaml
+```
+
+For quick testing with default settings:
+
+```bash
+cerbos server --set=storage.disk.directory=/path/to/policies
+```
+
+## Next Steps
+
+- Create your first [policy](/policies/overview)
+- Configure [storage backends](/configuration/storage) 
+- Set up [TLS encryption](/configuration/server)
+- Explore [deployment options](/deployment/kubernetes)

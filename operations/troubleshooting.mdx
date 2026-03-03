@@ -1,0 +1,754 @@
+---
+title: Troubleshooting Guide
+description: Diagnose and resolve common issues in Cerbos deployments with practical solutions and debugging techniques
+---
+
+This guide helps diagnose and resolve common operational issues with Cerbos deployments.
+
+## Health Check Failures
+
+### Symptoms
+
+Health check endpoints return errors or non-200 status codes.
+
+<AccordionGroup>
+  <Accordion title="HTTP Health Check Returns 500">
+    **Possible Causes:**
+    - Cerbos server not fully initialized
+    - Storage backend unavailable
+    - Critical service failure
+    
+    **Diagnosis:**
+    ```bash
+    # Check HTTP endpoint directly
+    curl -v http://localhost:3592/_cerbos/health?service=cerbos.svc.v1.CerbosService
+    
+    # Check server logs
+    docker logs cerbos --tail 100
+    
+    # Check if server is listening
+    netstat -tlnp | grep 3592
+    ```
+    
+    **Solutions:**
+    1. Check storage backend connectivity
+    2. Review server startup logs for errors
+    3. Verify configuration file is valid
+    4. Ensure adequate resources (memory, CPU)
+    5. Check for port conflicts
+  </Accordion>
+
+  <Accordion title="gRPC Health Check Timeout">
+    **Possible Causes:**
+    - Server not responding on gRPC port
+    - TLS configuration mismatch
+    - Network connectivity issues
+    - Firewall blocking gRPC port
+    
+    **Diagnosis:**
+    ```bash
+    # Test gRPC connectivity
+    grpcurl -plaintext localhost:3593 list
+    
+    # Test with TLS
+    grpcurl -cacert ca.crt localhost:3593 list
+    
+    # Check health specifically
+    grpcurl -plaintext localhost:3593 \
+      grpc.health.v1.Health/Check \
+      -d '{"service":"cerbos.svc.v1.CerbosService"}'
+    ```
+    
+    **Solutions:**
+    1. Verify gRPC port (3593) is accessible
+    2. Check TLS configuration matches client
+    3. Ensure gRPC server started successfully
+    4. Review firewall/security group rules
+    5. Test with `cerbos healthcheck --kind=grpc`
+  </Accordion>
+
+  <Accordion title="Health Check Works but Requests Fail">
+    **Possible Causes:**
+    - Policy loading errors
+    - Validation failures
+    - Partial service degradation
+    
+    **Diagnosis:**
+    ```bash
+    # Check policy load status
+    cerbosctl --server=localhost:3593 get policies
+    
+    # Test actual authorization request
+    grpcurl -plaintext -d '{
+      "principal": {"id": "user1", "roles": ["user"]},
+      "resource": {"kind": "document", "id": "1"},
+      "actions": ["view"]
+    }' localhost:3593 cerbos.svc.v1.CerbosService/CheckResources
+    ```
+    
+    **Solutions:**
+    1. Validate policy syntax: `cerbos compile <policy-dir>`
+    2. Check policy store synchronization
+    3. Review error logs for policy evaluation failures
+    4. Verify schema validation if using schemas
+  </Accordion>
+</AccordionGroup>
+
+## Storage Backend Issues
+
+### Git Storage Problems
+
+<AccordionGroup>
+  <Accordion title="Git Clone/Fetch Failures">
+    **Error Messages:**
+    ```
+    failed to clone repository
+    authentication failed
+    repository not found
+    ```
+    
+    **Diagnosis:**
+    ```bash
+    # Test git access manually
+    git clone <repository-url> /tmp/test-clone
+    
+    # Check SSH key
+    ssh-add -l
+    ssh -T [email protected]
+    
+    # Check HTTPS credentials
+    git credential fill
+    ```
+    
+    **Solutions:**
+    
+    **For SSH:**
+    ```yaml
+    storage:
+      driver: git
+      git:
+        protocol: ssh
+        url: [email protected]:org/policies.git
+        sshAuth:
+          privateKeyFile: /path/to/key
+          # Ensure file is mounted and readable
+    ```
+    
+    **For HTTPS:**
+    ```yaml
+    storage:
+      driver: git
+      git:
+        protocol: https
+        url: https://github.com/org/policies.git
+        auth:
+          username: oauth2
+          password: ${GITHUB_TOKEN}
+    ```
+    
+    **Common Fixes:**
+    1. Verify repository URL is correct
+    2. Check authentication credentials are valid
+    3. Ensure SSH key has no passphrase or use ssh-agent
+    4. For private repos, verify access permissions
+    5. Check network connectivity to git server
+  </Accordion>
+
+  <Accordion title="Policies Not Updating">
+    **Symptoms:**
+    - Policy changes not reflected in Cerbos
+    - `cerbos_dev_store_last_successful_refresh` metric not updating
+    
+    **Diagnosis:**
+    ```bash
+    # Check update interval
+    grep updatePollInterval config.yaml
+    
+    # Monitor metrics
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep cerbos_dev_store_last_successful_refresh
+    
+    # Check sync errors
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep cerbos_dev_store_sync_error_count
+    ```
+    
+    **Solutions:**
+    ```yaml
+    storage:
+      driver: git
+      git:
+        updatePollInterval: 60s  # Reduce for faster updates
+        checkoutTimeout: 30s
+    ```
+    
+    1. Reduce `updatePollInterval` if needed
+    2. Check for network issues to git server
+    3. Review logs for fetch errors
+    4. Verify branch name is correct
+    5. Force refresh via Admin API if available
+  </Accordion>
+</AccordionGroup>
+
+### Database Storage Problems
+
+<AccordionGroup>
+  <Accordion title="Connection Pool Exhaustion">
+    **Error Messages:**
+    ```
+    could not open a connection to the database
+    connection pool timeout
+    too many connections
+    ```
+    
+    **Diagnosis:**
+    ```bash
+    # Check active connections (PostgreSQL)
+    psql -c "SELECT count(*) FROM pg_stat_activity WHERE application_name='cerbos'"
+    
+    # Monitor connection pool metrics
+    curl -s http://localhost:3592/_cerbos/metrics | grep pool
+    ```
+    
+    **Solutions:**
+    ```yaml
+    storage:
+      driver: postgres
+      postgres:
+        connPool:
+          maxOpen: 25      # Increase if needed
+          maxIdle: 10
+          maxLifetime: 300s
+          maxIdleTime: 60s
+    ```
+    
+    **Tuning Guidelines:**
+    1. Set `maxOpen` based on workload: `(CPU cores × 2) + spindles`
+    2. Keep `maxIdle` at ~50% of `maxOpen`
+    3. Ensure database `max_connections` > Cerbos instances × `maxOpen`
+    4. Monitor for connection leaks in application
+  </Accordion>
+
+  <Accordion title="Database Connection Failures">
+    **Error Messages:**
+    ```
+    connection refused
+    authentication failed
+    SSL required
+    ```
+    
+    **Diagnosis:**
+    ```bash
+    # Test connection manually
+    psql "postgresql://user:pass@localhost:5432/cerbos?sslmode=require"
+    
+    # Check network connectivity
+    telnet db-host 5432
+    
+    # Verify SSL/TLS
+    openssl s_client -connect db-host:5432 -starttls postgres
+    ```
+    
+    **Solutions:**
+    
+    **Connection String:**
+    ```yaml
+    storage:
+      driver: postgres
+      postgres:
+        url: "postgresql://user:${DB_PASSWORD}@host:5432/cerbos?sslmode=verify-full&sslrootcert=/path/to/ca.crt"
+    ```
+    
+    **SSL Modes:**
+    - `disable`: No SSL (development only)
+    - `require`: Require SSL, don't verify cert
+    - `verify-ca`: Verify certificate authority
+    - `verify-full`: Verify cert and hostname (recommended)
+    
+    **Common Fixes:**
+    1. Verify database host and port
+    2. Check username and password
+    3. Ensure database exists
+    4. Configure SSL/TLS properly
+    5. Check firewall rules
+    6. Verify connection retry settings
+  </Accordion>
+</AccordionGroup>
+
+## Performance Issues
+
+### High Latency
+
+<AccordionGroup>
+  <Accordion title="Consistently High P50 Latency (> 10ms)">
+    **Diagnosis:**
+    ```promql
+    # Check median latency
+    histogram_quantile(0.50, 
+      rate(cerbos_dev_engine_check_latency_bucket[5m])
+    )
+    
+    # Check cache hit rate
+    sum(rate(cerbos_dev_cache_access_count{result="hit"}[5m])) / 
+    sum(rate(cerbos_dev_cache_access_count[5m]))
+    
+    # Check compilation time
+    histogram_quantile(0.95, 
+      rate(cerbos_dev_compiler_compile_duration_bucket[5m])
+    )
+    ```
+    
+    **Common Causes:**
+    1. **Cache misses**: Low cache hit rate (< 90%)
+    2. **Complex policies**: Heavy condition evaluation
+    3. **Storage latency**: Slow policy loading
+    4. **Resource constraints**: CPU/memory pressure
+    
+    **Solutions:**
+    1. Warm cache on startup
+    2. Simplify policy conditions
+    3. Optimize storage backend (see Performance guide)
+    4. Increase CPU/memory allocation
+    5. Review policy design patterns
+  </Accordion>
+
+  <Accordion title="Intermittent Latency Spikes">
+    **Diagnosis:**
+    ```bash
+    # Monitor GC pauses
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep go_gc_duration_seconds
+    
+    # Check memory usage
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep process_resident_memory_bytes
+    
+    # Review logs for cache evictions
+    docker logs cerbos 2>&1 | grep -i evict
+    ```
+    
+    **Common Causes:**
+    1. **GC pressure**: Frequent garbage collection
+    2. **Cache evictions**: Memory pressure causing cache churn
+    3. **Storage sync**: Policy updates during requests
+    4. **Network issues**: Intermittent connectivity problems
+    
+    **Solutions:**
+    1. Increase memory allocation
+    2. Reduce GC frequency by allocating more heap
+    3. Stagger policy updates across instances
+    4. Investigate network stability
+    5. Monitor P99 latency trends
+  </Accordion>
+
+  <Accordion title="Storage Backend Latency">
+    **Diagnosis:**
+    ```promql
+    # Bundle operation latency
+    histogram_quantile(0.95, 
+      rate(cerbos_dev_store_bundle_op_latency_bucket[5m])
+    )
+    
+    # Store poll count
+    rate(cerbos_dev_store_poll_count[5m])
+    
+    # Sync errors
+    rate(cerbos_dev_store_sync_error_count[5m])
+    ```
+    
+    **Solutions by Storage Type:**
+    
+    **Git:**
+    - Increase `updatePollInterval` to reduce fetch frequency
+    - Use local git cache/mirror
+    - Reduce repository size
+    
+    **Database:**
+    - Tune connection pool (see Database section)
+    - Add database indexes
+    - Use read replicas
+    
+    **Blob Storage:**
+    - Use regional endpoints
+    - Enable CDN/caching layer
+    - Reduce poll interval if network is slow
+  </Accordion>
+</AccordionGroup>
+
+## Memory Issues
+
+<AccordionGroup>
+  <Accordion title="Out of Memory (OOM) Errors">
+    **Symptoms:**
+    ```
+    container killed by OOMKiller
+    runtime: out of memory
+    fatal error: runtime: out of memory
+    ```
+    
+    **Diagnosis:**
+    ```bash
+    # Check memory usage
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep process_resident_memory_bytes
+    
+    # Monitor cache size
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep cerbos_dev_cache_live_objects
+    
+    # Check container limits
+    docker stats cerbos
+    kubectl top pod cerbos-xxx
+    ```
+    
+    **Memory Estimation:**
+    ```
+    Required Memory = Base (100MB)
+                    + (Policies × 1MB)
+                    + (Request Rate × 10KB)
+                    + (Audit Buffer × 1KB)
+    ```
+    
+    **Solutions:**
+    
+    **Kubernetes:**
+    ```yaml
+    resources:
+      requests:
+        memory: "1Gi"
+      limits:
+        memory: "2Gi"  # 2-3x request
+    ```
+    
+    **Docker:**
+    ```bash
+    docker run --memory=2g --memory-reservation=1g cerbos
+    ```
+    
+    **Optimization:**
+    1. Reduce policy count if excessive
+    2. Decrease audit buffer size
+    3. Implement policy archival strategy
+    4. Monitor for memory leaks
+  </Accordion>
+
+  <Accordion title="Memory Leak Detection">
+    **Symptoms:**
+    - Memory usage grows continuously
+    - OOM after days/weeks of operation
+    - GC cannot reclaim memory
+    
+    **Diagnosis:**
+    ```bash
+    # Monitor memory growth over time
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep -E '(process_resident_memory|go_memstats_alloc)'
+    
+    # Check goroutine count
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep go_goroutines
+    
+    # Enable pprof (if compiled with debug)
+    go tool pprof http://localhost:6060/debug/pprof/heap
+    ```
+    
+    **Solutions:**
+    1. Update to latest Cerbos version
+    2. Report issue with metrics/logs
+    3. Implement periodic pod restarts as workaround
+    4. Monitor for specific operations causing leaks
+  </Accordion>
+</AccordionGroup>
+
+## TLS and Certificate Issues
+
+<AccordionGroup>
+  <Accordion title="Certificate Verification Failed">
+    **Error Messages:**
+    ```
+    x509: certificate signed by unknown authority
+    tls: bad certificate
+    certificate has expired
+    ```
+    
+    **Diagnosis:**
+    ```bash
+    # Check certificate details
+    openssl x509 -in /path/to/cert.crt -text -noout
+    
+    # Verify certificate chain
+    openssl verify -CAfile ca.crt cert.crt
+    
+    # Test TLS connection
+    openssl s_client -connect localhost:3593 -showcerts
+    ```
+    
+    **Solutions:**
+    
+    **Expired Certificate:**
+    1. Check expiration: `openssl x509 -enddate -noout -in cert.crt`
+    2. Renew certificate
+    3. Cerbos auto-reloads on file change
+    
+    **Wrong CA:**
+    ```yaml
+    server:
+      tls:
+        cert: /path/to/cert.crt
+        key: /path/to/key.key
+        caCert: /path/to/ca.crt  # Must match cert issuer
+    ```
+    
+    **Client-Side:**
+    ```bash
+    # Skip verification (testing only!)
+    cerbos healthcheck --insecure
+    
+    # Use custom CA
+    cerbos healthcheck --ca-cert=/path/to/ca.crt
+    ```
+  </Accordion>
+
+  <Accordion title="Certificate Not Reloading">
+    **Symptoms:**
+    - Updated certificate on disk
+    - Cerbos still uses old certificate
+    - No reload logged
+    
+    **Diagnosis:**
+    ```bash
+    # Check file permissions
+    ls -la /path/to/cert.crt
+    
+    # Verify file was actually updated
+    stat /path/to/cert.crt
+    
+    # Check Cerbos logs
+    docker logs cerbos 2>&1 | grep -i certificate
+    ```
+    
+    **Solutions:**
+    1. Ensure Cerbos has read permissions
+    2. Verify files are not symlinks to read-only mounts
+    3. Update both cert and key atomically
+    4. Check filesystem supports inotify (for auto-reload)
+    5. Restart Cerbos if auto-reload fails
+  </Accordion>
+</AccordionGroup>
+
+## Admin API Issues
+
+<AccordionGroup>
+  <Accordion title="Authentication Failed">
+    **Error Messages:**
+    ```
+    401 Unauthorized
+    authentication failed
+    invalid credentials
+    ```
+    
+    **Diagnosis:**
+    ```bash
+    # Test credentials
+    curl -u cerbos:password https://localhost:3592/admin/policy
+    
+    # Verify password hash generation
+    echo "password" | htpasswd -niBC 10 cerbos | cut -d ':' -f 2 | base64
+    ```
+    
+    **Solutions:**
+    
+    **Regenerate Password Hash:**
+    ```bash
+    # Generate new hash
+    echo "NewPassword" | htpasswd -niBC 10 cerbos | cut -d ':' -f 2 | base64
+    
+    # Update configuration
+    server:
+      adminAPI:
+        enabled: true
+        adminCredentials:
+          username: cerbos
+          passwordHash: <new-hash>
+    ```
+    
+    **Common Issues:**
+    1. Password not base64-encoded
+    2. Using bcrypt cost < 10
+    3. Using wrong username
+    4. Credentials from environment variables not set
+  </Accordion>
+
+  <Accordion title="Admin API Disabled">
+    **Error Messages:**
+    ```
+    404 Not Found
+    unimplemented
+    service not available
+    ```
+    
+    **Solution:**
+    ```yaml
+    server:
+      adminAPI:
+        enabled: true  # Must be explicitly enabled
+        adminCredentials:
+          username: admin
+          passwordHash: ${ADMIN_PASSWORD_HASH}
+    ```
+    
+    **Verify:**
+    ```bash
+    # Check service status via health endpoint
+    grpcurl -plaintext localhost:3593 \
+      grpc.health.v1.Health/Check \
+      -d '{"service":"cerbos.svc.v1.CerbosAdminService"}'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Audit Logging Issues
+
+<AccordionGroup>
+  <Accordion title="Audit Logs Not Written">
+    **Diagnosis:**
+    ```bash
+    # Check audit error count
+    curl -s http://localhost:3592/_cerbos/metrics | \
+      grep cerbos_dev_audit_error_count
+    
+    # Check configuration
+    grep -A 10 '^audit:' config.yaml
+    
+    # Verify backend connectivity (if Kafka/Hub)
+    ```
+    
+    **Solutions:**
+    
+    **File Backend:**
+    ```yaml
+    audit:
+      enabled: true
+      accessLogsEnabled: true
+      decisionLogsEnabled: true
+      backend: file
+      file:
+        path: /var/log/cerbos/audit.log
+        # Ensure directory exists and is writable
+    ```
+    
+    **Kafka Backend:**
+    ```bash
+    # Test Kafka connectivity
+    kafkacat -b kafka:9092 -L
+    
+    # Check Kafka topic
+    kafka-topics --bootstrap-server kafka:9092 --list
+    ```
+    
+    **Common Fixes:**
+    1. Verify backend is enabled in config
+    2. Check file permissions (file backend)
+    3. Verify Kafka broker connectivity
+    4. Ensure topic exists and is writable
+    5. Check for network/firewall issues
+  </Accordion>
+
+  <Accordion title="Oversized Audit Entries">
+    **Symptoms:**
+    - `cerbos_dev_audit_oversized_entry_count` increasing
+    - Some requests not logged
+    
+    **Diagnosis:**
+    ```promql
+    rate(cerbos_dev_audit_oversized_entry_count[5m])
+    ```
+    
+    **Solutions:**
+    
+    **Kafka Backend:**
+    ```yaml
+    audit:
+      backend: kafka
+      kafka:
+        maxBufferedRecords: 1000  # Increase if needed
+        compression: ['zstd']      # Use better compression
+    ```
+    
+    **Filter Sensitive Data:**
+    ```yaml
+    audit:
+      excludeMetadataKeys:
+        - authorization
+        - x-large-header
+      decisionLogFilters:
+        checkResources:
+          ignoreAllowAll: true  # Reduce log volume
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Debug Mode
+
+Enable debug logging temporarily:
+
+```bash
+# Send SIGUSR1 signal to Cerbos process
+kill -USR1 $(pidof cerbos)
+
+# Or in Kubernetes
+kubectl exec cerbos-pod -- kill -USR1 1
+```
+
+Debug logging automatically reverts after 10 minutes.
+
+**Configure Duration:**
+```bash
+export CERBOS_TEMP_LOG_LEVEL_DURATION=5m
+```
+
+## Getting Help
+
+### Information to Collect
+
+When reporting issues:
+
+1. **Version**: `cerbos version`
+2. **Configuration**: Sanitized config file
+3. **Logs**: Last 100 lines of logs
+4. **Metrics**: Relevant Prometheus metrics
+5. **Environment**: Deployment method (Docker, K8s, binary)
+6. **Reproduction**: Steps to reproduce the issue
+
+### Log Collection
+
+```bash
+# Docker
+docker logs cerbos --tail 100 > cerbos.log
+
+# Kubernetes
+kubectl logs deployment/cerbos --tail=100 > cerbos.log
+
+# Binary
+journalctl -u cerbos -n 100 > cerbos.log
+```
+
+### Support Channels
+
+- **Community Slack**: Join Cerbos Slack for community help
+- **GitHub Issues**: Open issues for bugs
+- **Documentation**: Check docs.cerbos.dev
+- **Enterprise Support**: Contact Cerbos for enterprise support
+
+## Common Error Messages
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `failed to load config` | Invalid YAML | Validate YAML syntax |
+| `store initialization failed` | Storage backend unreachable | Check storage connectivity |
+| `policy compilation failed` | Invalid policy syntax | Run `cerbos compile` |
+| `connection refused` | Service not listening | Verify server started, check ports |
+| `certificate signed by unknown authority` | TLS cert mismatch | Verify CA certificate |
+| `authentication failed` | Wrong credentials | Regenerate password hash |
+| `context deadline exceeded` | Timeout | Increase timeout, check network |
+| `resource exhausted` | Rate limiting | Reduce request rate or increase limits |

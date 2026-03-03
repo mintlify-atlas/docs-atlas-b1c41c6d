@@ -1,0 +1,799 @@
+---
+title: "AWS Lambda Deployment"
+description: "Deploy Cerbos on AWS Lambda as a serverless Policy Decision Point"
+---
+
+Cerbos can be deployed on AWS Lambda in two patterns: as a standalone Lambda function or as a Lambda Extension (sidecar pattern).
+
+## Deployment Patterns
+
+### Lambda Function
+
+A standalone Lambda function that handles authorization requests directly via API Gateway.
+
+**Use cases:**
+- Centralized authorization service
+- Multi-application policy enforcement
+- Microservices architecture with shared authorization
+
+### Lambda Extension
+
+Cerbos runs as a Lambda Extension alongside your application code, providing local policy evaluation.
+
+**Use cases:**
+- Low-latency authorization requirements
+- Sidecar pattern for existing Lambda functions
+- Isolated policy evaluation per function
+
+## Lambda Function Deployment
+
+### Prerequisites
+
+- AWS CLI configured
+- AWS SAM CLI installed
+- Policies prepared in a directory structure
+- ARM64 Lambda runtime support
+
+### Architecture
+
+The Lambda function deployment uses:
+- **Runtime**: `provided.al2` (Amazon Linux 2)
+- **Architecture**: ARM64
+- **Memory**: 1024 MB (recommended)
+- **Timeout**: 5 seconds
+- **Handler**: `bootstrap`
+
+<Steps>
+
+### Clone deployment templates
+
+```bash
+git clone https://github.com/cerbos/cerbos.git
+cd cerbos/deploy/awslambda/function
+```
+
+### Prepare policies
+
+Create a `config-layer` directory with your policies:
+
+```bash
+mkdir -p config-layer/policies
+cp -r /path/to/your/policies/* config-layer/policies/
+```
+
+### Create configuration
+
+Create `config-layer/.cerbos.yaml`:
+
+```yaml
+---
+auxData:
+  jwt:
+    disableVerification: true  # Enable if not using signed JWTs
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /opt/policies
+```
+
+<Warning>
+Disabling JWT verification is not recommended for production. This makes the system insecure by forcing Cerbos to evaluate policies using potentially tampered data.
+</Warning>
+
+### Build the function
+
+```bash
+# Download Cerbos binary for Lambda
+wget https://github.com/cerbos/cerbos/releases/latest/download/cerbos_Linux_arm64.tar.gz
+mkdir -p dist
+tar -xzf cerbos_Linux_arm64.tar.gz -C dist/
+mv dist/cerbos dist/bootstrap
+chmod +x dist/bootstrap
+```
+
+### Deploy with SAM
+
+The SAM template (`sam.yml`):
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Cerbos Lambda Function
+
+Globals:
+  Function:
+    Timeout: 5
+
+Resources:
+  CerbosConfigLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: cerbos-config
+      Description: Cerbos config
+      ContentUri: config-layer/
+      CompatibleRuntimes:
+        - provided.al2
+        - provided.al2023
+      CompatibleArchitectures:
+        - arm64
+
+  CerbosFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: provided.al2
+      CodeUri: dist/
+      Handler: bootstrap
+      Architectures:
+        - arm64
+      MemorySize: 1024
+      Layers:
+        - !Ref CerbosConfigLayer
+      Events:
+        CheckResources:
+          Type: HttpApi
+          Properties:
+            Path: /api/check/resources
+            Method: POST
+        PlanResources:
+          Type: HttpApi
+          Properties:
+            Path: /api/plan/resources
+            Method: POST
+        HealthCheck:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: GET
+      Environment:
+        Variables:
+          CERBOS_LOG_LEVEL: info
+          XDG_CACHE_HOME: /tmp
+          CERBOS_CONFIG: /opt/.cerbos.yaml
+
+Outputs:
+  CerbosFunctionAPI:
+    Description: "API Gateway endpoint URL for Cerbos Function"
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  CerbosFunction:
+    Description: "Cerbos Lambda Function ARN"
+    Value: !GetAtt CerbosFunction.Arn
+  CerbosFunctionIamRole:
+    Description: "IAM Role created for the Cerbos Lambda function"
+    Value: !GetAtt CerbosFunctionRole.Arn
+```
+
+Deploy:
+
+```bash
+sam build
+sam deploy --guided
+```
+
+### Test the deployment
+
+```bash
+# Get the API endpoint from SAM output
+API_URL=$(sam list stack-outputs --stack-name cerbos-lambda \
+  --output json | jq -r '.[] | select(.OutputKey=="CerbosFunctionAPI") | .OutputValue')
+
+# Test health endpoint
+curl $API_URL/
+
+# Test authorization
+curl -X POST "$API_URL/api/check/resources" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requestId": "test",
+    "principal": {
+      "id": "user1",
+      "roles": ["user"]
+    },
+    "resource": {
+      "kind": "document",
+      "id": "doc1"
+    },
+    "actions": ["view", "edit"]
+  }'
+```
+
+</Steps>
+
+## Lambda Extension Deployment
+
+The Lambda Extension pattern deploys Cerbos as a Lambda Layer that runs alongside your application.
+
+### Architecture
+
+The extension:
+- Runs as a separate process in the Lambda execution environment
+- Communicates via Unix domain sockets
+- Starts before your function handler
+- Socket path: `unix:/tmp/cerbos.http.sock` (HTTP) and `unix:/tmp/cerbos.grpc.sock` (gRPC)
+
+<Steps>
+
+### Prepare extension layer
+
+```bash
+cd cerbos/deploy/awslambda/extension
+
+# Create extension directory structure
+mkdir -p layer/extensions
+
+# Download Cerbos binary
+wget https://github.com/cerbos/cerbos/releases/latest/download/cerbos_Linux_arm64.tar.gz
+tar -xzf cerbos_Linux_arm64.tar.gz -C layer/extensions/
+chmod +x layer/extensions/cerbos
+```
+
+### Create extension configuration
+
+Create `layer/.cerbos.yaml`:
+
+```yaml
+---
+auxData:
+  jwt:
+    disableVerification: true
+
+server:
+  httpListenAddr: "unix:/tmp/cerbos.http.sock"
+  grpcListenAddr: "unix:/tmp/cerbos.grpc.sock"
+
+storage:
+  driver: "disk"
+  disk:
+    directory: /var/task/policies
+```
+
+### Build gateway function
+
+The extension includes a gateway function that forwards API Gateway requests to Cerbos:
+
+```bash
+# Build the gateway
+GOOS=linux GOARCH=arm64 go build -o dist/bootstrap main.go
+chmod +x dist/bootstrap
+```
+
+Key gateway features:
+- Forwards HTTP requests from API Gateway to Cerbos Unix socket
+- Handles base64 encoding/decoding
+- Preserves headers and cookies
+- Supports X-Ray tracing
+
+### Deploy with SAM
+
+The extension SAM template (`sam.yml`):
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Cerbos Lambda Extension
+
+Globals:
+  Function:
+    Timeout: 5
+
+Resources:
+  CerbosExtensionLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: cerbos-extension
+      Description: Cerbos extension layer
+      ContentUri: ./layer
+      CompatibleRuntimes:
+        - provided.al2
+        - provided.al2023
+      CompatibleArchitectures:
+        - arm64
+
+  CerbosServerFunctionWithExt:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: provided.al2
+      CodeUri: dist/
+      Handler: bootstrap
+      Architectures:
+        - arm64
+      Layers:
+        - !Ref CerbosExtensionLayer
+      MemorySize: 1024
+      Events:
+        CatchAll:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+      Environment:
+        Variables:
+          CERBOS_LOG_LEVEL: info
+          XDG_CACHE_HOME: /tmp
+          CERBOS_CONFIG: /var/task/.cerbos.yaml
+
+Outputs:
+  CerbosServerFunctionAPI:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  CerbosServerFunctionWithExt:
+    Description: "Cerbos Server Function ARN"
+    Value: !GetAtt CerbosServerFunctionWithExt.Arn
+  CerbosExtensionLayerArn:
+    Description: "Cerbos Extension Layer ARN"
+    Value: !Ref CerbosExtensionLayer
+```
+
+Deploy:
+
+```bash
+sam build
+sam deploy --guided
+```
+
+### Use the extension in your functions
+
+Once deployed, attach the Cerbos extension layer to any Lambda function:
+
+```yaml
+MyAppFunction:
+  Type: AWS::Serverless::Function
+  Properties:
+    Runtime: python3.11
+    Handler: app.lambda_handler
+    Layers:
+      - !Ref CerbosExtensionLayer
+    Environment:
+      Variables:
+        CERBOS_ADDRESS: "unix:/tmp/cerbos.http.sock"
+```
+
+In your application code:
+
+```python
+import http.client
+import socket
+import json
+
+class UnixHTTPConnection(http.client.HTTPConnection):
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect("/tmp/cerbos.http.sock")
+
+def check_authorization(principal, resource, action):
+    conn = UnixHTTPConnection("localhost")
+    
+    payload = {
+        "requestId": "req-123",
+        "principal": principal,
+        "resource": resource,
+        "actions": [action]
+    }
+    
+    conn.request("POST", "/api/check/resources", 
+                 json.dumps(payload),
+                 {"Content-Type": "application/json"})
+    
+    response = conn.getresponse()
+    return json.loads(response.read())
+```
+
+</Steps>
+
+## Configuration
+
+### Environment Variables
+
+<CodeGroup>
+
+```bash Function
+CERBOS_LOG_LEVEL=info
+CERBOS_CONFIG=/opt/.cerbos.yaml
+XDG_CACHE_HOME=/tmp
+```
+
+```bash Extension
+CERBOS_LOG_LEVEL=info
+CERBOS_CONFIG=/var/task/.cerbos.yaml
+XDG_CACHE_HOME=/tmp
+```
+
+</CodeGroup>
+
+### Memory and Timeout
+
+Recommended settings:
+
+```yaml
+MemorySize: 1024  # MB - adjust based on policy size
+Timeout: 5        # seconds - increase for complex policies
+ReservedConcurrentExecutions: 10  # Optional: limit concurrency
+```
+
+### Policy Storage Locations
+
+<CodeGroup>
+
+```yaml Lambda Function
+storage:
+  driver: "disk"
+  disk:
+    directory: /opt/policies  # From Lambda Layer
+```
+
+```yaml Lambda Extension
+storage:
+  driver: "disk"
+  disk:
+    directory: /var/task/policies  # From deployment package
+```
+
+```yaml S3 Storage
+storage:
+  driver: "s3"
+  s3:
+    bucket: my-cerbos-policies
+    prefix: policies/
+    region: us-east-1
+```
+
+</CodeGroup>
+
+### IAM Permissions
+
+For S3 policy storage, add IAM permissions:
+
+```yaml
+Policies:
+  - S3ReadPolicy:
+      BucketName: my-cerbos-policies
+  - Statement:
+      - Effect: Allow
+        Action:
+          - s3:GetObject
+          - s3:ListBucket
+        Resource:
+          - arn:aws:s3:::my-cerbos-policies
+          - arn:aws:s3:::my-cerbos-policies/*
+```
+
+## Monitoring and Logging
+
+### CloudWatch Logs
+
+Logs are automatically sent to CloudWatch Logs:
+
+```bash
+# View logs
+aws logs tail /aws/lambda/CerbosFunction --follow
+
+# Filter for errors
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/CerbosFunction \
+  --filter-pattern "ERROR"
+```
+
+### CloudWatch Metrics
+
+Key Lambda metrics to monitor:
+- **Invocations**: Number of authorization requests
+- **Duration**: Response time
+- **Errors**: Failed invocations
+- **Throttles**: Rate limiting events
+- **ConcurrentExecutions**: Concurrent function instances
+
+### Custom Metrics
+
+Publish custom metrics for authorization decisions:
+
+```python
+import boto3
+
+cloudwatch = boto3.client('cloudwatch')
+
+def publish_authorization_metric(allowed: bool):
+    cloudwatch.put_metric_data(
+        Namespace='Cerbos',
+        MetricData=[
+            {
+                'MetricName': 'AuthorizationDecisions',
+                'Value': 1,
+                'Unit': 'Count',
+                'Dimensions': [
+                    {'Name': 'Decision', 'Value': 'Allowed' if allowed else 'Denied'}
+                ]
+            }
+        ]
+    )
+```
+
+### X-Ray Tracing
+
+Enable X-Ray for distributed tracing:
+
+```yaml
+CerbosFunction:
+  Type: AWS::Serverless::Function
+  Properties:
+    Tracing: Active
+```
+
+## Cost Optimization
+
+### Tips for Reducing Costs
+
+1. **Right-size memory**: Start with 1024 MB and adjust based on metrics
+2. **Use ARM64**: 20% cost savings compared to x86_64
+3. **Reserved concurrency**: Limit concurrent executions to control costs
+4. **Cold start optimization**: Keep policies small and use Lambda layers
+5. **Request batching**: Batch multiple authorization checks in one request
+
+### Pricing Estimate
+
+Example calculation for 1 million requests/month:
+
+```
+Assumptions:
+- 1024 MB memory
+- 100ms average duration
+- ARM64 architecture
+
+Lambda costs:
+- Requests: 1M * $0.20/1M = $0.20
+- Compute: 1M * 100ms * 1024MB * $0.0000133334/GB-sec = $1.36
+
+Total: ~$1.56/month
+```
+
+## Performance Optimization
+
+### Cold Start Reduction
+
+<CodeGroup>
+
+```yaml Provisioned Concurrency
+CerbosFunction:
+  Type: AWS::Serverless::Function
+  Properties:
+    ProvisionedConcurrencyConfig:
+      ProvisionedConcurrentExecutions: 2
+```
+
+```yaml Lambda SnapStart
+CerbosFunction:
+  Type: AWS::Serverless::Function
+  Properties:
+    SnapStart:
+      ApplyOn: PublishedVersions
+```
+
+</CodeGroup>
+
+### Policy Caching
+
+Cerbos automatically caches compiled policies in memory. For Lambda, the cache persists during warm starts.
+
+### Request Batching
+
+Batch multiple authorization checks:
+
+```json
+{
+  "requestId": "batch-1",
+  "principal": {
+    "id": "user1",
+    "roles": ["user"]
+  },
+  "resources": [
+    {
+      "resource": {"kind": "document", "id": "doc1"},
+      "actions": ["view", "edit"]
+    },
+    {
+      "resource": {"kind": "document", "id": "doc2"},
+      "actions": ["view", "edit"]
+    }
+  ]
+}
+```
+
+## Security Best Practices
+
+### API Gateway Authentication
+
+Add Lambda authorizer:
+
+```yaml
+Auth:
+  DefaultAuthorizer: MyLambdaAuthorizer
+  Authorizers:
+    MyLambdaAuthorizer:
+      FunctionArn: !GetAtt AuthorizerFunction.Arn
+      Identity:
+        Headers:
+          - Authorization
+```
+
+### VPC Configuration
+
+Deploy Lambda in a VPC for network isolation:
+
+```yaml
+VpcConfig:
+  SecurityGroupIds:
+    - sg-xxxxxxxxx
+  SubnetIds:
+    - subnet-xxxxxxxxx
+    - subnet-yyyyyyyyy
+```
+
+### Secrets Management
+
+Use AWS Secrets Manager for sensitive configuration:
+
+```yaml
+Environment:
+  Variables:
+    GITHUB_TOKEN: !Sub '{{resolve:secretsmanager:cerbos-secrets:SecretString:github_token}}'
+```
+
+### Policy Signing
+
+Enable JWT verification in production:
+
+```yaml
+auxData:
+  jwt:
+    disableVerification: false
+    keySets:
+      - id: auth0
+        remote:
+          url: https://your-tenant.auth0.com/.well-known/jwks.json
+          refreshInterval: 1h
+```
+
+## Troubleshooting
+
+### Function Timeout
+
+```bash
+# Increase timeout
+aws lambda update-function-configuration \
+  --function-name CerbosFunction \
+  --timeout 10
+```
+
+### Memory Issues
+
+```bash
+# Increase memory
+aws lambda update-function-configuration \
+  --function-name CerbosFunction \
+  --memory-size 2048
+```
+
+### Policy Not Found
+
+Verify policy location:
+
+```bash
+# For function deployment
+zip -sf dist/bootstrap.zip | grep policies
+
+# For layer
+aws lambda get-layer-version \
+  --layer-name cerbos-config \
+  --version-number 1
+```
+
+### Extension Not Starting
+
+Check extension logs:
+
+```bash
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/CerbosFunction \
+  --filter-pattern "[EXTENSION]"
+```
+
+## Complete Production Example
+
+A production-ready Lambda function with all best practices:
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Production Cerbos Lambda
+
+Globals:
+  Function:
+    Timeout: 10
+    MemorySize: 1024
+    Runtime: provided.al2
+    Architectures:
+      - arm64
+    Tracing: Active
+    Environment:
+      Variables:
+        CERBOS_LOG_LEVEL: info
+
+Resources:
+  CerbosConfigLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: cerbos-config-prod
+      ContentUri: config-layer/
+      CompatibleRuntimes:
+        - provided.al2
+      CompatibleArchitectures:
+        - arm64
+
+  CerbosFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: cerbos-prod
+      CodeUri: dist/
+      Handler: bootstrap
+      Layers:
+        - !Ref CerbosConfigLayer
+      ReservedConcurrentExecutions: 10
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        CheckResources:
+          Type: HttpApi
+          Properties:
+            Path: /api/check/resources
+            Method: POST
+            Auth:
+              Authorizer: OAuth2Authorizer
+      Environment:
+        Variables:
+          CERBOS_CONFIG: /opt/.cerbos.yaml
+          XDG_CACHE_HOME: /tmp
+      Policies:
+        - AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref PolicyBucket
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Ref CerbosSecrets
+
+  CerbosFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CerbosFunction}
+      RetentionInDays: 7
+
+  CerbosFunctionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: CerbosHighErrorRate
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CerbosFunction
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint
+    Value: !Sub https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  FunctionArn:
+    Description: Cerbos Function ARN
+    Value: !GetAtt CerbosFunction.Arn
+```
+
+This configuration includes VPC isolation, monitoring, alarms, and proper IAM permissions for production use.

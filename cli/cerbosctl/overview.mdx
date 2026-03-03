@@ -1,0 +1,106 @@
+---
+title: "Cerbosctl Overview"
+description: "Command-line tool for managing Cerbos policies, schemas, and audit logs"
+---
+
+## Overview
+
+Cerbosctl is a command-line interface (CLI) tool for managing Cerbos instances. It provides commands to upload policies and schemas, retrieve policy information, view audit logs, and inspect decision logs through an interactive interface.
+
+## Prerequisites
+
+The Cerbos Admin API must be enabled for these commands to work. The Admin API requires authentication credentials that can be provided through:
+
+- **Netrc file**: Standard `.netrc` file format
+- **Environment variables**: See configuration below
+- **Command-line arguments**: Direct flag-based authentication
+
+When multiple methods are used, the precedence order (lowest to highest) is: netrc < environment < command line.
+
+## Global Configuration
+
+### Connection Flags
+
+| Flag | Environment Variable | Default | Description |
+|------|---------------------|---------|-------------|
+| `--server` | `CERBOS_SERVER` | `localhost:3593` | Address of the Cerbos server |
+| `--username` | `CERBOS_USERNAME` | - | Admin username |
+| `--password` | `CERBOS_PASSWORD` | - | Admin password |
+| `--plaintext` | - | `false` | Use plaintext protocol without TLS |
+| `--insecure` | - | `false` | Skip validating server certificate |
+| `--ca-cert` | - | - | Path to the CA certificate for verifying server identity |
+| `--client-cert` | - | - | Path to the TLS client certificate |
+| `--client-key` | - | - | Path to the TLS client key |
+
+### Environment Variables
+
+Set these environment variables to avoid passing credentials on the command line:
+
+```bash
+export CERBOS_SERVER=localhost:3593
+export CERBOS_USERNAME=admin
+export CERBOS_PASSWORD=your-password
+```
+
+## Installation
+
+Cerbosctl is distributed as part of the Cerbos release. Download it from the [Cerbos releases page](https://github.com/cerbos/cerbos/releases).
+
+## Usage Examples
+
+### Connect to a TLS-enabled server
+
+```bash
+cerbosctl --server=localhost:3593 \
+  --username=user \
+  --password=password \
+  --insecure \
+  decisions
+```
+
+### Connect to a non-TLS server
+
+```bash
+cerbosctl --server=localhost:3593 \
+  --username=user \
+  --password=password \
+  --plaintext \
+  get resource_policies
+```
+
+### Using environment variables
+
+```bash
+export CERBOS_SERVER=localhost:3593
+export CERBOS_USERNAME=admin
+export CERBOS_PASSWORD=secret
+
+cerbosctl get schemas
+cerbosctl decisions
+```
+
+## Available Commands
+
+| Command | Description |
+|---------|-------------|
+| [`get`](/cli/cerbosctl/get) | List or view policies and schemas |
+| [`put`](/cli/cerbosctl/put) | Upload policies or schemas to the server |
+| [`decisions`](/cli/cerbosctl/decisions) | Interactive decision log viewer |
+| [`audit`](/cli/cerbosctl/audit) | View audit logs (access and decision logs) |
+| `delete` | Delete schemas from the server |
+| `disable` | Disable policies |
+| `enable` | Enable policies |
+| `inspect` | Inspect policies for detailed information |
+| `store` | Store operations (export, reload, revisions) |
+| `hub` | Cerbos Hub operations |
+| `version` | Show cerbosctl and PDP version |
+
+## Getting Help
+
+Get help for any command using the `--help` flag:
+
+```bash
+cerbosctl --help
+cerbosctl get --help
+cerbosctl put policy --help
+```

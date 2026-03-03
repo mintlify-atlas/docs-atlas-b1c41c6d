@@ -1,0 +1,303 @@
+---
+title: Integration Examples
+description: Real-world examples of integrating Cerbos authorization into your applications
+---
+
+This page provides practical examples of using Cerbos APIs to implement authorization in your applications. All examples are based on the album management use case from the Cerbos repository.
+
+## Example Scenario
+
+Consider an application with:
+
+- **Resources**: Albums with attributes like `owner`, `public`, and `flagged`
+- **Principals**: Users with roles like `user` and `moderator`
+- **Actions**: Operations like `view`, `delete`, and `flag`
+
+## Resource Policy
+
+First, define the authorization rules in a resource policy:
+
+```yaml
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  importDerivedRoles:
+    - common_roles
+  resource: "album:object"
+  version: "default"
+  rules:
+    - actions: ['*']
+      effect: EFFECT_ALLOW
+      derivedRoles:
+        - owner
+
+    - actions: ['view', 'flag']
+      effect: EFFECT_ALLOW
+      roles:
+        - user
+      condition:
+        match:
+          expr: request.resource.attr.public == true
+
+    - actions: ['view', 'delete']
+      effect: EFFECT_ALLOW
+      derivedRoles:
+        - abuse_moderator
+```
+
+## Derived Roles
+
+Dynamically assign roles based on contextual data:
+
+```yaml
+apiVersion: "api.cerbos.dev/v1"
+derivedRoles:
+  name: common_roles
+  definitions:
+    - name: owner
+      parentRoles: ["user"]
+      condition:
+        match:
+          expr: request.resource.attr.owner == request.principal.id
+
+    - name: abuse_moderator
+      parentRoles: ["moderator"]
+      condition:
+        match:
+          expr: request.resource.attr.flagged == true
+```
+
+## CheckResources API Example
+
+### Request
+
+Check if user "alicia" can view a specific album:
+
+```bash
+curl -X POST "http://localhost:3592/api/check/resources?pretty" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "requestId": "test01",
+  "includeMeta": true,
+  "principal": {
+    "id": "alicia",
+    "roles": ["user"]
+  },
+  "resources": [
+    {
+      "actions": ["view"],
+      "resource": {
+        "id": "XX125",
+        "kind": "album:object",
+        "attr": {
+          "owner": "alicia",
+          "public": false,
+          "flagged": false
+        }
+      }
+    }
+  ]
+}'
+```
+
+### Response
+
+The API returns the authorization decision with metadata:
+
+```json
+{
+  "requestId": "test01",
+  "results": [
+    {
+      "resource": {
+        "id": "XX125",
+        "kind": "album:object",
+        "policyVersion": "default"
+      },
+      "actions": {
+        "view": "EFFECT_ALLOW"
+      },
+      "meta": {
+        "actions": {
+          "view": {
+            "matchedPolicy": "resource.album_object.vdefault"
+          }
+        },
+        "effectiveDerivedRoles": [
+          "owner"
+        ]
+      }
+    }
+  ]
+}
+```
+
+<Note>
+The user "alicia" is granted access because she is the owner of the album, which grants the derived role "owner" that allows all actions.
+</Note>
+
+## Integration Patterns
+
+### Pattern 1: Single Resource Check
+
+Use this pattern when checking permissions for a single resource action:
+
+```json
+{
+  "principal": {
+    "id": "user123",
+    "roles": ["user"]
+  },
+  "resources": [
+    {
+      "actions": ["view"],
+      "resource": {
+        "id": "resource123",
+        "kind": "album:object",
+        "attr": {
+          "owner": "user123",
+          "public": true
+        }
+      }
+    }
+  ]
+}
+```
+
+### Pattern 2: Multiple Actions Check
+
+Check multiple actions on a resource in one request:
+
+```json
+{
+  "principal": {
+    "id": "user123",
+    "roles": ["user", "moderator"]
+  },
+  "resources": [
+    {
+      "actions": ["view", "edit", "delete"],
+      "resource": {
+        "id": "resource123",
+        "kind": "album:object",
+        "attr": {
+          "owner": "user456",
+          "public": false,
+          "flagged": true
+        }
+      }
+    }
+  ]
+}
+```
+
+### Pattern 3: Batch Resource Check
+
+Check permissions for multiple resources efficiently:
+
+```json
+{
+  "principal": {
+    "id": "user123",
+    "roles": ["user"]
+  },
+  "resources": [
+    {
+      "actions": ["view"],
+      "resource": {
+        "id": "album1",
+        "kind": "album:object",
+        "attr": {"owner": "user123", "public": false}
+      }
+    },
+    {
+      "actions": ["view"],
+      "resource": {
+        "id": "album2",
+        "kind": "album:object",
+        "attr": {"owner": "user456", "public": true}
+      }
+    }
+  ]
+}
+```
+
+## Best Practices
+
+### Include Request IDs
+
+Always include a unique `requestId` for tracing and debugging:
+
+```json
+{
+  "requestId": "req-2024-001-abc123",
+  "principal": {...},
+  "resources": [...]
+}
+```
+
+### Use Metadata for Debugging
+
+Set `includeMeta: true` to get detailed information about policy matches:
+
+```json
+{
+  "requestId": "debug-001",
+  "includeMeta": true,
+  "principal": {...},
+  "resources": [...]
+}
+```
+
+The metadata includes:
+- Which policy rule matched
+- Which derived roles were applied
+- Policy version used
+
+### Pass Relevant Attributes
+
+Include all attributes needed for policy evaluation:
+
+```json
+{
+  "resource": {
+    "id": "resource123",
+    "kind": "album:object",
+    "attr": {
+      "owner": "user123",
+      "public": true,
+      "flagged": false,
+      "createdAt": "2024-01-01T00:00:00Z",
+      "department": "engineering"
+    }
+  }
+}
+```
+
+### Handle Both Allow and Deny
+
+Check the effect for each action and handle accordingly:
+
+```javascript
+const result = response.results[0];
+if (result.actions.view === "EFFECT_ALLOW") {
+  // Grant access
+} else {
+  // Deny access
+}
+```
+
+## SDK Usage Examples
+
+For SDK-specific examples in your programming language, see:
+
+- [Go SDK Examples](https://github.com/cerbos/cerbos-sdk-go)
+- [JavaScript SDK Examples](https://github.com/cerbos/cerbos-sdk-javascript)
+- [Python SDK Examples](https://github.com/cerbos/cerbos-sdk-python)
+- [Java SDK Examples](https://github.com/cerbos/cerbos-sdk-java)
+
+## Additional Resources
+
+- [Policy authoring guide](/policies/overview)
+- [CheckResources API reference](/api/check-resources)
+- [PlanResources API reference](/api/plan-resources)
+- [Cerbos Playground](https://play.cerbos.dev) - Try examples interactively

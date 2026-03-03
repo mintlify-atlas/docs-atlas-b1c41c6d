@@ -1,0 +1,128 @@
+---
+title: Store Management APIs
+description: Admin APIs for managing the Cerbos policy store including reloading policies and purging revision history.
+---
+
+The Store Management APIs allow administrators to manage the underlying policy store. All endpoints require BasicAuth authentication.
+
+## ReloadStore
+
+Trigger a reload of the policy store to pick up changes from the underlying storage backend. This is useful when policies are updated externally (e.g., files modified on disk, database changes) and you want Cerbos to reload them without restarting the server.
+
+### HTTP Request
+
+```bash
+GET /admin/store/reload
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Query Parameters
+
+<ParamField query="wait" type="boolean">
+  Wait until the reloading process finishes before returning the response. If `false` or omitted, the API returns immediately and the reload happens asynchronously.
+  
+  Default: `false`
+</ParamField>
+
+### Response
+
+Returns an empty response object on success.
+
+### Example Request - Asynchronous Reload
+
+```bash
+curl https://cerbos.example.com/admin/store/reload \
+  -u admin:password
+```
+
+### Example Request - Synchronous Reload
+
+```bash
+curl "https://cerbos.example.com/admin/store/reload?wait=true" \
+  -u admin:password
+```
+
+### Use Cases
+
+- **File-based stores (disk, blob, git)**: Reload after updating policy files externally
+- **Database stores (mysql, postgres, sqlite3)**: Reload after making direct database changes
+- **CI/CD pipelines**: Trigger reload after deploying new policies
+- **Hot-reload development**: Automatically reload during policy development
+
+---
+
+## PurgeStoreRevisions
+
+Purge old revisions from the policy store to free up storage space. This is particularly useful for stores that maintain revision history, such as database-backed stores.
+
+### HTTP Request
+
+```bash
+DELETE /admin/store/revisions
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Query Parameters
+
+<ParamField query="keepLast" type="number">
+  Number of most recent revisions to keep for each policy. If not specified or set to zero, all revisions will be deleted (keeping only the current version).
+  
+  Example: `keepLast=5` will keep the 5 most recent revisions and delete all older ones
+</ParamField>
+
+### Response
+
+<ResponseField name="affectedRows" type="number">
+  Number of revision records deleted from the store
+</ResponseField>
+
+### Example Request - Keep Last 10 Revisions
+
+```bash
+curl -X DELETE "https://cerbos.example.com/admin/store/revisions?keepLast=10" \
+  -u admin:password
+```
+
+### Example Request - Delete All Revisions
+
+```bash
+curl -X DELETE "https://cerbos.example.com/admin/store/revisions" \
+  -u admin:password
+```
+
+### Example Response
+
+```json
+{
+  "affectedRows": 47
+}
+```
+
+### Use Cases
+
+- **Storage management**: Free up database space by removing old revisions
+- **Compliance**: Implement data retention policies by purging old policy versions
+- **Performance optimization**: Reduce database size for faster queries
+- **Scheduled maintenance**: Run periodic purge operations to prevent unbounded growth
+
+### Important Notes
+
+- This operation only affects stores that maintain revision history (primarily database stores)
+- File-based stores typically don't maintain internal revisions, so this operation has no effect
+- The current version of each policy is never deleted
+- Setting `keepLast=0` deletes all historical revisions but keeps the current version
+- This operation is irreversible - deleted revisions cannot be recovered
+
+### Best Practices
+
+1. **Regular purging**: Schedule periodic purge operations (e.g., weekly or monthly)
+2. **Keep recent revisions**: Retain at least 5-10 recent revisions for rollback capability
+3. **Monitor storage**: Track store size before and after purging
+4. **Backup before purging**: Create backups before major purge operations
+5. **Test in staging**: Test purge operations in a non-production environment first

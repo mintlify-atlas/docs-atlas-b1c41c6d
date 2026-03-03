@@ -1,0 +1,534 @@
+---
+title: "Helm Chart Installation"
+description: "Deploy Cerbos to Kubernetes using the official Helm chart"
+---
+
+The official Cerbos Helm chart provides a production-ready way to deploy Cerbos to Kubernetes clusters. The chart supports multiple deployment patterns and integrates with Kubernetes-native features.
+
+## Prerequisites
+
+- Kubernetes 1.23.0 or later
+- Helm 3.0 or later
+- kubectl configured to access your cluster
+
+## Add Helm Repository
+
+<Steps>
+
+<Step title="Add the Cerbos Helm repository">
+```bash
+helm repo add cerbos https://download.cerbos.dev/helm-charts
+```
+</Step>
+
+<Step title="Update repository cache">
+```bash
+helm repo update
+```
+</Step>
+
+<Step title="Verify repository">
+```bash
+helm search repo cerbos
+```
+</Step>
+
+</Steps>
+
+## Quick Start Installation
+
+Install Cerbos with default settings:
+
+```bash
+helm install cerbos cerbos/cerbos --version=0.52.0
+```
+
+This creates a deployment with:
+- 1 replica
+- HTTP service on port 3592
+- gRPC service on port 3593
+- Default policy storage configuration
+
+## OCI Registry Installation
+
+The chart is also available from an OCI registry:
+
+```bash
+helm install cerbos oci://ghcr.io/cerbos/helm-charts/cerbos --version=0.52.0
+```
+
+## Configuration Options
+
+View all available configuration values:
+
+```bash
+helm show values cerbos/cerbos --version=0.52.0
+```
+
+### Key Configuration Values
+
+| Parameter | Description | Default |
+|-----------|-------------|----------|
+| `replicaCount` | Number of Cerbos pods | `1` |
+| `image.repository` | Container image repository | `ghcr.io/cerbos/cerbos` |
+| `image.tag` | Image tag (defaults to chart appVersion) | `""` |
+| `image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `service.type` | Kubernetes service type | `ClusterIP` |
+| `service.httpPort` | HTTP service port | `3592` |
+| `service.grpcPort` | gRPC service port | `3593` |
+| `cerbos.logLevel` | Log level (DEBUG, INFO, WARN, ERROR) | `INFO` |
+| `cerbos.config` | Cerbos configuration object | `{}` |
+| `type` | Workload type (deployment or daemonset) | `deployment` |
+
+## TLS Configuration
+
+Secure Cerbos endpoints with TLS certificates.
+
+### Using Existing TLS Secret
+
+<Steps>
+
+<Step title="Create TLS secret">
+Create a Kubernetes secret with your certificates:
+
+```bash
+kubectl create secret generic cerbos-tls \
+  --from-file=tls.crt=/path/to/cert.pem \
+  --from-file=tls.key=/path/to/key.pem \
+  --from-file=ca.crt=/path/to/ca.pem
+```
+
+The secret must contain:
+- `tls.crt` - Certificate chain (required)
+- `tls.key` - Private key (required)
+- `ca.crt` - CA certificate for trust pool (optional)
+</Step>
+
+<Step title="Install with TLS enabled">
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --set=cerbos.tlsSecretName=cerbos-tls
+```
+</Step>
+
+</Steps>
+
+### Using cert-manager
+
+If you use [cert-manager](https://cert-manager.io), the chart can create a Certificate resource:
+
+```yaml
+certManager:
+  certSpec:
+    secretName: cerbos-tls-cert
+    issuerRef:
+      name: letsencrypt-prod
+      kind: ClusterIssuer
+    dnsNames:
+      - cerbos.example.com
+```
+
+Install with cert-manager:
+
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --values=cert-manager-values.yaml
+```
+
+## Storage Configurations
+
+### Git Repository Storage
+
+Deploy Cerbos configured to read policies from a Git repository.
+
+<Steps>
+
+<Step title="Create GitHub personal access token">
+Follow [GitHub's documentation](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token) to create a PAT with `repo` permissions.
+</Step>
+
+<Step title="Create Kubernetes secret">
+```bash
+PAT=YOUR_GITHUB_TOKEN
+kubectl create secret generic cerbos-github-token \
+  --from-literal=GITHUB_TOKEN=$PAT
+```
+</Step>
+
+<Step title="Create values file">
+Create `git-values.yaml`:
+
+```yaml
+envFrom:
+  - secretRef:
+      name: cerbos-github-token
+
+cerbos:
+  config:
+    storage:
+      driver: "git"
+      git:
+        protocol: https
+        url: https://github.com/your-org/policies.git
+        branch: main
+        subDir: policies
+        checkoutDir: /work
+        updatePollInterval: 60s
+        https:
+          username: "cerbos"
+          password: "${GITHUB_TOKEN}"
+```
+</Step>
+
+<Step title="Install with Git storage">
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --values=git-values.yaml
+```
+</Step>
+
+</Steps>
+
+### Volume-Mounted Storage
+
+Deploy Cerbos with policies from a Kubernetes volume.
+
+<Steps>
+
+<Step title="Create values file">
+Create `volume-values.yaml`:
+
+```yaml
+volumes:
+  - name: cerbos-policies
+    hostPath:
+      path: /data/cerbos-policies
+
+volumeMounts:
+  - name: cerbos-policies
+    mountPath: /policies
+    readOnly: true
+
+cerbos:
+  config:
+    storage:
+      driver: "disk"
+      disk:
+        directory: /policies
+        watchForChanges: true
+```
+</Step>
+
+<Step title="Install with volume storage">
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --values=volume-values.yaml
+```
+</Step>
+
+</Steps>
+
+<Note>
+You can use any Kubernetes volume type (PersistentVolumeClaim, ConfigMap, NFS, etc.) instead of `hostPath`. See [Kubernetes volumes documentation](https://kubernetes.io/docs/concepts/storage/volumes/).
+</Note>
+
+### Cerbos Hub Storage
+
+Connect your PDP to Cerbos Hub for centralized policy distribution.
+
+<Steps>
+
+<Step title="Create Hub credentials secret">
+```bash
+kubectl create secret generic cerbos-hub-credentials \
+  --from-literal=CERBOS_HUB_CLIENT_ID=your_client_id \
+  --from-literal=CERBOS_HUB_CLIENT_SECRET=your_client_secret \
+  --from-literal=CERBOS_HUB_DEPLOYMENT_ID=your_deployment_id
+```
+</Step>
+
+<Step title="Create values file">
+Create `hub-values.yaml`:
+
+```yaml
+cerbos:
+  config:
+    audit:
+      enabled: true
+      backend: "hub"
+      hub:
+        storagePath: /audit_logs
+
+envFrom:
+  - secretRef:
+      name: cerbos-hub-credentials
+
+volumes:
+  - name: cerbos-audit-logs
+    emptyDir: {}
+
+volumeMounts:
+  - name: cerbos-audit-logs
+    mountPath: /audit_logs
+```
+
+<Note>
+For production, use a PersistentVolume instead of `emptyDir` for audit log storage.
+</Note>
+</Step>
+
+<Step title="Install with Hub integration">
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --values=hub-values.yaml
+```
+</Step>
+
+</Steps>
+
+## Scaling and High Availability
+
+### Horizontal Scaling
+
+Increase replicas for high availability:
+
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --set=replicaCount=3
+```
+
+### Autoscaling
+
+Enable Horizontal Pod Autoscaler:
+
+```yaml
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+```
+
+Install with autoscaling:
+
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --set=autoscaling.enabled=true \
+  --set=autoscaling.minReplicas=2 \
+  --set=autoscaling.maxReplicas=10
+```
+
+### DaemonSet Mode
+
+Deploy as a DaemonSet for node-local access:
+
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --set=type=daemonset
+```
+
+## Resource Management
+
+Set resource limits and requests:
+
+```yaml
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+```
+
+Apply resource limits:
+
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --set=resources.limits.cpu=1000m \
+  --set=resources.limits.memory=512Mi \
+  --set=resources.requests.cpu=250m \
+  --set=resources.requests.memory=256Mi
+```
+
+## Advanced Configuration
+
+### Customizing Manifests with Kustomize
+
+For advanced customization, use Helm's post-renderer feature with Kustomize.
+
+<Steps>
+
+<Step title="Create kustomization.yaml">
+```yaml
+resources:
+  - base.yaml
+patches:
+  - patch: |-
+      - op: add
+        path: /spec/loadBalancerSourceRanges
+        values: ["10.0.0.0/16"]
+    target:
+      version: v1
+      kind: Service
+```
+</Step>
+
+<Step title="Create post-renderer script">
+Create `kustomize.sh` and make it executable:
+
+```bash
+#!/usr/bin/env bash
+cat > base.yaml
+exec kubectl kustomize
+```
+
+```bash
+chmod +x kustomize.sh
+```
+</Step>
+
+<Step title="Test the customization">
+```bash
+helm template cerbos cerbos/cerbos --post-renderer ./kustomize.sh
+```
+</Step>
+
+<Step title="Install with customization">
+```bash
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --post-renderer=./kustomize.sh
+```
+</Step>
+
+</Steps>
+
+### Service Types
+
+<CodeGroup>
+
+```bash ClusterIP (Default)
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --set=service.type=ClusterIP
+```
+
+```bash NodePort
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --set=service.type=NodePort \
+  --set=service.httpNodePort=31592 \
+  --set=service.grpcNodePort=31593
+```
+
+```bash LoadBalancer
+helm install cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --set=service.type=LoadBalancer
+```
+
+</CodeGroup>
+
+## Monitoring and Observability
+
+### Prometheus Integration
+
+Enable Prometheus service discovery annotations:
+
+```yaml
+cerbos:
+  prometheusPodAnnotationsEnabled: true
+```
+
+This adds annotations to pods for automatic Prometheus scraping.
+
+### Custom Environment Variables
+
+Inject additional environment variables:
+
+```yaml
+env:
+  - name: CERBOS_NO_TELEMETRY
+    value: "1"
+  - name: CUSTOM_VAR
+    value: "custom-value"
+```
+
+## Upgrading
+
+Upgrade an existing installation:
+
+```bash
+helm upgrade cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --values=values.yaml
+```
+
+View upgrade diff before applying:
+
+```bash
+helm diff upgrade cerbos cerbos/cerbos \
+  --version=0.52.0 \
+  --values=values.yaml
+```
+
+## Uninstalling
+
+Remove the Cerbos deployment:
+
+```bash
+helm uninstall cerbos
+```
+
+## Troubleshooting
+
+<CodeGroup>
+
+```bash Check Pod Status
+kubectl get pods -l app.kubernetes.io/name=cerbos
+```
+
+```bash View Logs
+kubectl logs -l app.kubernetes.io/name=cerbos --follow
+```
+
+```bash Describe Pod
+kubectl describe pod -l app.kubernetes.io/name=cerbos
+```
+
+```bash Check Service
+kubectl get svc -l app.kubernetes.io/name=cerbos
+```
+
+```bash Port Forward
+kubectl port-forward svc/cerbos 3592:3592
+```
+
+</CodeGroup>
+
+## Chart Information
+
+- **Chart Version**: 0.52.0
+- **App Version**: 0.52.0
+- **Kubernetes Version**: >= 1.23.0
+- **Maintainer**: Cerbos Authors (help+helm@cerbos.dev)
+- **Repository**: https://download.cerbos.dev/helm-charts
+- **Source**: https://github.com/cerbos/cerbos
+
+## Next Steps
+
+- Configure [deployment patterns](/deployment/kubernetes) for different use cases
+- Set up [sidecar deployments](/deployment/kubernetes) for per-pod access
+- Explore [DaemonSet mode](/deployment/kubernetes) for node-local PDPs
+- Review [production best practices](/deployment/kubernetes) for Kubernetes

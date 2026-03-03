@@ -1,0 +1,178 @@
+---
+title: "cerbos compile"
+description: "Compile and test Cerbos policies"
+---
+
+## Overview
+
+The `cerbos compile` command compiles your Cerbos policies and optionally runs tests to verify they work as expected. This is useful for validating policies during development and in CI/CD pipelines.
+
+## Usage
+
+```bash
+cerbos compile [flags] <policy-directory>
+```
+
+## Arguments
+
+<ParamField path="policy-directory" type="path" required>
+  Path to the directory containing your Cerbos policies.
+</ParamField>
+
+## Flags
+
+### Testing
+
+<ParamField path="--skip-tests" type="boolean" default="false">
+  Skip running tests. Only compile the policies without executing test cases.
+</ParamField>
+
+<ParamField path="--test-filter" type="string[]">
+  Filter tests by dimensions. Can be specified multiple times to combine filters.
+  
+  **Format:** `dimension=glob1,glob2;...`
+  
+  **Dimensions:** `suite`, `test`, `principal`, `resource`, `action`
+  
+  **Example:** `--test-filter='suite=MySuite;test=album*;principal=alice'`
+</ParamField>
+
+<ParamField path="--skip-batching" type="boolean" default="false">
+  Skip batching tests. Run tests individually instead of in batches.
+</ParamField>
+
+<ParamField path="--verbose" type="boolean" default="false">
+  Enable verbose output on test failure. Shows detailed information about failed tests.
+</ParamField>
+
+### Output
+
+<ParamField path="--output" type="string" default="tree">
+  Output format for compilation results.
+  
+  **Options:** `tree`, `list`, `json`
+</ParamField>
+
+<ParamField path="--test-output" type="string">
+  Test output format. If not specified, matches the value of `--output`.
+  
+  **Options:** `tree`, `list`, `json`, `junit`
+</ParamField>
+
+<ParamField path="--color" type="string" default="auto">
+  Output color level.
+  
+  **Options:** `auto`, `never`, `always`, `256`, `16m`
+</ParamField>
+
+<ParamField path="--no-color" type="boolean" default="false">
+  Disable colored output. Alternative to `--color=never`.
+</ParamField>
+
+### Schema Validation
+
+<ParamField path="--ignore-schemas" type="boolean" default="false">
+  Ignore schema validation during compilation. Useful when schemas are not available or validation should be skipped.
+</ParamField>
+
+### Legacy Options
+
+<ParamField path="--tests" type="path">
+  Deprecated. Path to the directory containing tests. Defaults to the policy directory.
+</ParamField>
+
+<ParamField path="--run" type="string">
+  Deprecated. Run only tests that match this regex pattern.
+</ParamField>
+
+## Examples
+
+### Compile and run all tests
+
+```bash
+cerbos compile /path/to/policy/repo
+```
+
+### Compile without running tests
+
+```bash
+cerbos compile --skip-tests /path/to/policy/repo
+```
+
+### Run tests matching a specific filter
+
+```bash
+cerbos compile \
+  --test-filter='suite=MySuite;test=album*;principal=alice;resource=my_album;action=view' \
+  /path/to/policy/repo
+```
+
+### Combine multiple test filters
+
+```bash
+cerbos compile \
+  --test-filter='principal=alice,bob' \
+  --test-filter='action=view,edit' \
+  /path/to/policy/repo
+```
+
+All filter dimensions are merged, so this runs tests where the principal is either alice or bob AND the action is either view or edit.
+
+### Output results as JSON
+
+```bash
+cerbos compile --output=json /path/to/policy/repo
+```
+
+### Generate JUnit test report
+
+```bash
+cerbos compile --test-output=junit /path/to/policy/repo > test-results.xml
+```
+
+### Verbose test output
+
+```bash
+cerbos compile --verbose /path/to/policy/repo
+```
+
+### Compile without color output
+
+```bash
+cerbos compile --no-color /path/to/policy/repo
+```
+
+### Ignore schema validation
+
+```bash
+cerbos compile --ignore-schemas /path/to/policy/repo
+```
+
+## Exit Codes
+
+- `0` - Success: All policies compiled and all tests passed
+- `3` - Compilation failed: Policies have syntax or validation errors
+- `4` - Tests failed: Policies compiled but some tests failed
+
+## Test Filters
+
+Test filters allow you to run a subset of your tests based on various dimensions:
+
+- **suite** - Filter by test suite name
+- **test** - Filter by test case name
+- **principal** - Filter by principal in test
+- **resource** - Filter by resource in test
+- **action** - Filter by action in test
+
+Filters support glob patterns (`*`, `?`, etc.) and can be combined. Multiple values for the same dimension are OR'd together, while different dimensions are AND'd together.
+
+## CI/CD Integration
+
+The compile command is designed for CI/CD pipelines:
+
+```bash
+# In your CI pipeline
+cerbos compile --output=list --test-output=junit ./policies > junit.xml
+```
+
+The command exits with a non-zero status code if compilation or tests fail, making it easy to fail CI builds when policies have issues.

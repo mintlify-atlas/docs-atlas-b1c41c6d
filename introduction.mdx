@@ -1,0 +1,191 @@
+---
+title: "What is Cerbos?"
+description: "An authorization layer that evolves with your product. Define powerful, context-aware access control rules in simple YAML policies."
+---
+
+## The Authorization Problem
+
+As applications grow, authorization logic becomes increasingly complex. You need to answer questions like:
+
+- Can this user view this resource?
+- Which resources of this type can this user access?
+- How do I implement role-based access with attribute-based conditions?
+- How do I update authorization rules without deploying code?
+
+Cerbos solves these challenges by providing a **Policy Decision Point (PDP)** that separates authorization logic from your application code. Define access control rules in human-readable YAML policies, and make simple API calls to evaluate permissions in real-time.
+
+## Why Cerbos?
+
+<CardGroup cols={2}>
+  <Card title="Policy as Code" icon="file-code">
+    Define authorization rules in YAML files that live in your Git repository. Update policies without changing application code or redeploying services.
+  </Card>
+  
+  <Card title="Authorization as a Service" icon="server">
+    Run Cerbos as a standalone service that scales independently. Make authorization decisions from any part of your application stack.
+  </Card>
+  
+  <Card title="RBAC to ABAC" icon="shield-check">
+    Start with simple role-based access control (RBAC) and evolve to attribute-based access control (ABAC) with dynamic conditions as your needs grow.
+  </Card>
+  
+  <Card title="Deploy Anywhere" icon="cloud">
+    Run as a Kubernetes service or sidecar, systemd service, AWS Lambda function, or Docker container. Works with your existing infrastructure.
+  </Card>
+</CardGroup>
+
+## How Cerbos Works
+
+Cerbos integrates into your application architecture as a dedicated authorization service:
+
+<Steps>
+  <Step title="Define Policies">
+    Write resource policies in YAML that define who can do what on your resources. Store policies on disk, in cloud object stores, Git repositories, or databases.
+    
+    ```yaml Resource Policy Example
+    ---
+    apiVersion: api.cerbos.dev/v1
+    resourcePolicy:
+      resource: "album:object"
+      version: "default"
+      rules:
+        - actions: ['*']
+          effect: EFFECT_ALLOW
+          derivedRoles:
+            - owner
+        
+        - actions: ['view']
+          effect: EFFECT_ALLOW
+          roles:
+            - user
+          condition:
+            match:
+              expr: request.resource.attr.public == true
+    ```
+  </Step>
+  
+  <Step title="Deploy the PDP">
+    Run the Cerbos Policy Decision Point as a service in your infrastructure. The PDP continuously monitors your policies and evaluates authorization requests.
+  </Step>
+  
+  <Step title="Make Authorization Calls">
+    From your application, make API calls to Cerbos to check permissions. Get simple ALLOW or DENY responses based on your policies.
+    
+    ```go SDK Example
+    resp, err := client.CheckResources(
+      ctx,
+      principal,
+      cerbos.NewResourceBatch(
+        cerbos.NewResource("album:object", "photo123").WithAttr("owner", "alice"),
+        "view", "delete",
+      ),
+    )
+    ```
+  </Step>
+  
+  <Step title="Query for Resources">
+    Use the PlanResources API to get a query plan showing which resources a user can access. Convert to database queries using query plan adapters.
+  </Step>
+</Steps>
+
+## Core Features
+
+### Two Primary APIs
+
+Cerbos provides two essential APIs for authorization:
+
+<CardGroup cols={2}>
+  <Card title="CheckResources" icon="circle-check" href="/api/check-resources">
+    **"Can this principal access this resource?"**
+    
+    Check permissions for specific actions on specific resources. Returns ALLOW or DENY for each action.
+  </Card>
+  
+  <Card title="PlanResources" icon="list-check" href="/api/plan-resources">
+    **"Which resources can this principal access?"**
+    
+    Get a query plan to filter resources by permission. Convert to SQL, Prisma, SQLAlchemy, or other query formats.
+  </Card>
+</CardGroup>
+
+### Flexible Policy Types
+
+<AccordionGroup>
+  <Accordion title="Resource Policies" icon="file-shield">
+    Define rules for who can perform actions on resource types. Support for wildcards, role-based rules, and dynamic conditions.
+    
+    **Use for:** Standard RBAC and ABAC rules per resource type
+  </Accordion>
+  
+  <Accordion title="Derived Roles" icon="user-gear">
+    Dynamically assign roles based on context. For example, assign "owner" role when `resource.owner == principal.id`.
+    
+    **Use for:** Context-dependent role assignment
+  </Accordion>
+  
+  <Accordion title="Principal Policies" icon="user-lock">
+    Override rules for specific users or principals. Provide exceptions to general authorization rules.
+    
+    **Use for:** Special cases and user-specific overrides
+  </Accordion>
+</AccordionGroup>
+
+## Key Concepts
+
+Understand these fundamental concepts to work effectively with Cerbos:
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts">
+    Learn about Principals, Actions, Resources, and Policies
+  </Card>
+  
+  <Card title="Get Started" icon="rocket" href="/quickstart">
+    Run Cerbos locally and try your first authorization check
+  </Card>
+  
+  <Card title="View Policies" icon="code" href="/policies/overview">
+    Explore policy types and authoring guidelines
+  </Card>
+  
+  <Card title="Choose Deployment" icon="server" href="/deployment/kubernetes">
+    Find the right deployment option for your infrastructure
+  </Card>
+</CardGroup>
+
+## Performance & Scalability
+
+Cerbos is designed for production workloads:
+
+- **Fast gRPC API** for low-latency authorization checks (HTTP gateway also available)
+- **Sidecar deployment** for minimal network latency
+- **Stateless architecture** scales horizontally
+- **In-memory policy evaluation** for sub-millisecond decisions
+- **Bring your own identity** - integrates with any authentication provider
+
+## Trusted by Companies Worldwide
+
+Cerbos is used by organizations of all sizes to handle authorization at scale.
+
+<Info>
+  **Using Cerbos?** Let us know at devrel@cerbos.dev
+</Info>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Quickstart" icon="play" href="/quickstart">
+    Get Cerbos running in 5 minutes
+  </Card>
+  
+  <Card title="Core Concepts" icon="graduation-cap" href="/concepts">
+    Learn the fundamentals
+  </Card>
+  
+  <Card title="Install Cerbos" icon="download" href="/installation/container">
+    Choose your installation method
+  </Card>
+</CardGroup>
+
+<Note>
+  **New to authorization?** Start with our [quickstart guide](/quickstart) to see Cerbos in action with a working example.
+</Note>

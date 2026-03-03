@@ -1,0 +1,800 @@
+---
+title: "Conditions and Expressions"
+description: "Write powerful CEL expressions for fine-grained, attribute-based access control"
+---
+
+## Overview
+
+Conditions enable **attribute-based access control (ABAC)** in Cerbos policies. Using the Common Expression Language (CEL), you can write dynamic rules that evaluate request attributes, resource properties, and principal information at runtime.
+
+Conditions let you:
+- Check ownership: `request.resource.attr.owner == request.principal.id`
+- Validate status: `request.resource.attr.status == "PENDING_APPROVAL"`
+- Enforce geography: `request.resource.attr.region == request.principal.attr.region`
+- Check time windows: `now().getHours() >= 9 && now().getHours() < 17`
+- Validate IP ranges: `request.principal.attr.ip.inIPAddrRange("10.0.0.0/8")`
+
+## Basic Syntax
+
+Conditions use CEL (Common Expression Language), a simple, fast expression language.
+
+### Simple Condition
+
+```yaml
+rules:
+  - actions: ["edit"]
+    effect: EFFECT_ALLOW
+    roles: ["user"]
+    condition:
+      match:
+        expr: request.resource.attr.owner == request.principal.id
+```
+
+### Condition Structure
+
+<ParamField path="condition" type="object">
+  The condition block that must evaluate to `true` for the rule to match.
+</ParamField>
+
+<ParamField path="match" type="object" required>
+  Contains the matching logic. Always required inside `condition`.
+</ParamField>
+
+<ParamField path="expr" type="string">
+  A single CEL expression. Use this for simple conditions.
+</ParamField>
+
+<ParamField path="all" type="object">
+  Logical AND - all expressions must be true. Alternative to `expr`.
+</ParamField>
+
+<ParamField path="any" type="object">
+  Logical OR - at least one expression must be true. Alternative to `expr`.
+</ParamField>
+
+<ParamField path="none" type="object">
+  Logical NOR - no expressions can be true. Alternative to `expr`.
+</ParamField>
+
+## Request Variables
+
+Cerbos provides several built-in variables for accessing request data:
+
+### request.principal
+
+Information about the user or service making the request:
+
+```yaml
+expr: request.principal.id == "alice"                 # Principal ID
+expr: "admin" in request.principal.roles              # Check role
+expr: request.principal.attr.department == "engineering"  # Custom attribute
+```
+
+**Available fields:**
+- `request.principal.id` - Principal identifier (string)
+- `request.principal.roles` - List of static roles (list of strings)
+- `request.principal.attr` - Custom attributes (map)
+- `request.principal.scope` - Request scope (string)
+
+### request.resource
+
+Information about the resource being accessed:
+
+```yaml
+expr: request.resource.id == "doc123"                 # Resource ID
+expr: request.resource.kind == "document"             # Resource type
+expr: request.resource.attr.status == "published"     # Custom attribute
+```
+
+**Available fields:**
+- `request.resource.id` - Resource identifier (string)
+- `request.resource.kind` - Resource type (string)
+- `request.resource.attr` - Custom attributes (map)
+- `request.resource.scope` - Resource scope (string)
+
+### request.aux_data
+
+Additional request metadata:
+
+```yaml
+expr: request.aux_data.jwt.aud == "my-app"            # JWT claims
+expr: request.aux_data.ip_address.inIPAddrRange("10.0.0.0/8")  # IP checks
+```
+
+**Common fields:**
+- `request.aux_data.jwt` - Decoded JWT claims (if provided)
+- `request.aux_data.*` - Any custom data passed in the request
+
+### Shorthand Variables
+
+For cleaner expressions, use these shortcuts:
+
+- **`P`** = `request.principal`
+- **`R`** = `request.resource`
+- **`V`** = `variables` (see Variables section)
+- **`C`** = `constants` (see Constants section)
+
+```yaml
+# Verbose
+expr: request.resource.attr.owner == request.principal.id
+
+# Shorthand
+expr: R.attr.owner == P.id
+```
+
+## Logical Operators
+
+### Single Expression (expr)
+
+For simple conditions:
+
+```yaml
+condition:
+  match:
+    expr: R.attr.owner == P.id
+```
+
+### All (AND)
+
+All conditions must be true:
+
+```yaml
+condition:
+  match:
+    all:
+      of:
+        - expr: R.attr.status == "PENDING"
+        - expr: R.attr.geography == P.attr.geography
+        - expr: R.attr.amount < 10000
+```
+
+### Any (OR)
+
+At least one condition must be true:
+
+```yaml
+condition:
+  match:
+    any:
+      of:
+        - expr: R.attr.public == true
+        - expr: R.attr.owner == P.id
+        - expr: "admin" in P.roles
+```
+
+### None (NOR)
+
+No conditions can be true:
+
+```yaml
+condition:
+  match:
+    none:
+      of:
+        - expr: R.attr.archived == true
+        - expr: R.attr.deleted == true
+```
+
+### Nested Logic
+
+Combine logical operators:
+
+```yaml
+condition:
+  match:
+    all:
+      of:
+        - expr: R.attr.status == "active"
+        - any:  # Nested OR within AND
+            of:
+              - expr: R.attr.owner == P.id
+              - expr: "manager" in P.roles
+```
+
+## CEL Operators
+
+### Comparison
+
+```yaml
+expr: R.attr.age == 25          # Equal
+expr: R.attr.age != 25          # Not equal
+expr: R.attr.age > 18           # Greater than
+expr: R.attr.age >= 18          # Greater than or equal
+expr: R.attr.age < 65           # Less than
+expr: R.attr.age <= 65          # Less than or equal
+```
+
+### Logical
+
+```yaml
+expr: R.attr.active && R.attr.verified        # AND
+expr: R.attr.public || R.attr.owner == P.id   # OR
+expr: !R.attr.archived                         # NOT
+```
+
+### String Operations
+
+```yaml
+expr: R.attr.name.startsWith("Project_")           # Starts with
+expr: R.attr.email.endsWith("@example.com")        # Ends with
+expr: R.attr.description.contains("urgent")        # Contains substring
+expr: R.attr.name.matches("^[A-Z][a-z]+$")        # Regex match
+expr: R.attr.status in ["PENDING", "APPROVED"]    # In list
+```
+
+### Arithmetic
+
+```yaml
+expr: R.attr.price * 1.1 > 100                     # Multiplication
+expr: R.attr.total - R.attr.discount < 50          # Subtraction
+expr: R.attr.quantity + 5 <= P.attr.quota          # Addition
+expr: R.attr.score / R.attr.attempts > 0.8         # Division
+```
+
+### List Operations
+
+```yaml
+expr: "admin" in P.roles                           # Membership
+expr: P.id in R.attr.collaborators                 # Check if in list
+expr: R.attr.tags.size() > 0                       # List size
+expr: R.attr.items.exists(i, i.status == "active") # Any match (exists)
+expr: R.attr.items.all(i, i.verified == true)      # All match
+```
+
+## Cerbos-Specific Functions
+
+Cerbos extends CEL with custom functions for common authorization patterns:
+
+### Set Operations
+
+<AccordionGroup>
+  <Accordion title="hasIntersection">
+    Check if two lists share any elements:
+    
+    ```yaml
+    expr: P.attr.teams.hasIntersection(R.attr.allowed_teams)
+    expr: ["read", "write"].hasIntersection(P.attr.permissions)
+    ```
+  </Accordion>
+  
+  <Accordion title="isSubset">
+    Check if one list is a subset of another:
+    
+    ```yaml
+    expr: R.attr.required_roles.isSubset(P.roles)
+    expr: ["read"].isSubset(["read", "write", "admin"])
+    ```
+  </Accordion>
+  
+  <Accordion title="intersect">
+    Get the intersection of two lists:
+    
+    ```yaml
+    expr: P.attr.teams.intersect(R.attr.teams).size() > 0
+    ```
+  </Accordion>
+  
+  <Accordion title="except">
+    Get elements in first list but not in second:
+    
+    ```yaml
+    expr: R.attr.required_perms.except(P.attr.permissions).size() == 0
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Time Functions
+
+<AccordionGroup>
+  <Accordion title="now()">
+    Get current timestamp:
+    
+    ```yaml
+    expr: now().getHours() >= 9 && now().getHours() < 17  # Business hours
+    expr: now().getDayOfWeek() < 6                        # Weekday (Mon=0)
+    expr: now() < timestamp("2024-12-31T23:59:59Z")      # Before date
+    ```
+  </Accordion>
+  
+  <Accordion title="timestamp()">
+    Parse timestamp from string:
+    
+    ```yaml
+    expr: timestamp(R.attr.expires_at) > now()
+    expr: timestamp(R.attr.created_at).getFullYear() == 2024
+    ```
+  </Accordion>
+  
+  <Accordion title="timeSince()">
+    Duration since a timestamp:
+    
+    ```yaml
+    expr: timestamp(R.attr.created_at).timeSince() < duration("24h")
+    expr: timestamp(R.attr.modified_at).timeSince() > duration("7d")
+    ```
+  </Accordion>
+  
+  <Accordion title="duration()">
+    Parse duration from string:
+    
+    ```yaml
+    expr: duration("1h")   # 1 hour
+    expr: duration("30m")  # 30 minutes
+    expr: duration("7d")   # 7 days
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Network Functions
+
+<AccordionGroup>
+  <Accordion title="inIPAddrRange()">
+    Check if IP address is in CIDR range:
+    
+    ```yaml
+    expr: P.attr.ip_address.inIPAddrRange("10.0.0.0/8")     # Private network
+    expr: P.attr.ip_address.inIPAddrRange("192.168.1.0/24") # Subnet
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Type Checking
+
+<AccordionGroup>
+  <Accordion title="has()">
+    Check if field exists:
+    
+    ```yaml
+    expr: has(R.attr.owner) && R.attr.owner == P.id
+    expr: has(P.attr.department)  # Check attribute exists
+    ```
+  </Accordion>
+  
+  <Accordion title="type()">
+    Get value type:
+    
+    ```yaml
+    expr: type(R.attr.value) == string
+    expr: type(R.attr.count) == int
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Variables
+
+Define reusable expressions:
+
+### Top-Level Variables
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+variables:
+  is_owner: R.attr.owner == P.id
+  is_public: R.attr.public == true
+  is_recent: |-
+    timestamp(R.attr.created_at).timeSince() < duration("24h")
+  pending_status: '"PENDING_APPROVAL"'  # String literal
+
+resourcePolicy:
+  resource: document
+  version: "default"
+  rules:
+    - actions: ["edit"]
+      effect: EFFECT_ALLOW
+      roles: ["user"]
+      condition:
+        match:
+          any:
+            of:
+              - expr: V.is_owner
+              - expr: V.is_public && V.is_recent
+```
+
+### Local Variables (in policies)
+
+```yaml
+resourcePolicy:
+  resource: document
+  version: "default"
+  variables:
+    local:
+      same_dept: R.attr.department == P.attr.department
+      is_manager: '"manager" in P.roles'
+    import:
+      - common_variables  # From export_variables/common_variables.yaml
+  rules:
+    - actions: ["approve"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: V.same_dept
+              - expr: V.is_manager
+```
+
+### Exported Variables
+
+Share variables across policies:
+
+```yaml
+# exports/common_variables.yaml
+---
+apiVersion: api.cerbos.dev/v1
+exportVariables:
+  name: common_variables
+  definitions:
+    is_owner: R.attr.owner == P.id
+    is_public: R.attr.public == true
+    business_hours: now().getHours() >= 9 && now().getHours() < 17
+```
+
+Import and use:
+
+```yaml
+resourcePolicy:
+  resource: document
+  variables:
+    import:
+      - common_variables
+  rules:
+    - actions: ["edit"]
+      condition:
+        match:
+          expr: V.is_owner && V.business_hours
+```
+
+## Constants
+
+Define static values:
+
+### Local Constants
+
+```yaml
+resourcePolicy:
+  resource: leave_request
+  version: "default"
+  constants:
+    local:
+      max_days: 30
+      approval_threshold: 10000
+      pending_status: "PENDING_APPROVAL"
+  rules:
+    - actions: ["approve"]
+      condition:
+        match:
+          all:
+            of:
+              - expr: R.attr.days <= C.max_days
+              - expr: R.attr.status == C.pending_status
+```
+
+### Exported Constants
+
+```yaml
+# exports/app_constants.yaml
+---
+apiVersion: api.cerbos.dev/v1
+exportConstants:
+  name: app_constants
+  definitions:
+    max_file_size: 104857600  # 100MB
+    allowed_regions: ["us-east-1", "us-west-2", "eu-west-1"]
+    admin_email_domain: "@admin.example.com"
+```
+
+Import and use:
+
+```yaml
+resourcePolicy:
+  resource: document
+  constants:
+    import:
+      - app_constants
+  rules:
+    - actions: ["upload"]
+      condition:
+        match:
+          expr: R.attr.size <= C.max_file_size
+```
+
+## Common Patterns
+
+<Tabs>
+  <Tab title="Ownership">
+    ```yaml
+    # User owns resource
+    expr: R.attr.owner == P.id
+    
+    # User in collaborators list
+    expr: P.id in R.attr.collaborators
+    
+    # User created resource
+    expr: R.attr.created_by == P.id
+    ```
+  </Tab>
+  
+  <Tab title="Status">
+    ```yaml
+    # Specific status
+    expr: R.attr.status == "PENDING_APPROVAL"
+    
+    # Multiple allowed statuses
+    expr: R.attr.status in ["PENDING", "IN_PROGRESS"]
+    
+    # Not archived
+    expr: R.attr.status != "ARCHIVED"
+    ```
+  </Tab>
+  
+  <Tab title="Geography/Department">
+    ```yaml
+    # Same department
+    expr: R.attr.department == P.attr.department
+    
+    # Same region
+    expr: R.attr.region == P.attr.region
+    
+    # Manager of resource owner
+    expr: R.attr.owner in P.attr.direct_reports
+    ```
+  </Tab>
+  
+  <Tab title="Time">
+    ```yaml
+    # Created in last 24 hours
+    expr: timestamp(R.attr.created_at).timeSince() < duration("24h")
+    
+    # Business hours only
+    expr: now().getHours() >= 9 && now().getHours() < 17
+    
+    # Not expired
+    expr: timestamp(R.attr.expires_at) > now()
+    
+    # Weekend
+    expr: now().getDayOfWeek() >= 5
+    ```
+  </Tab>
+  
+  <Tab title="Hierarchical">
+    ```yaml
+    # Org hierarchy
+    expr: P.attr.org_id == R.attr.org_id
+    
+    # Team membership
+    expr: P.attr.teams.hasIntersection(R.attr.allowed_teams)
+    
+    # Parent resource ownership
+    expr: R.attr.parent_id in P.attr.owned_resources
+    ```
+  </Tab>
+</Tabs>
+
+## Advanced Examples
+
+<CodeGroup>
+```yaml Multi-Factor Approval
+rules:
+  - actions: ["approve"]
+    effect: EFFECT_ALLOW
+    roles: ["manager"]
+    condition:
+      match:
+        all:
+          of:
+            # Must be pending
+            - expr: R.attr.status == "PENDING_APPROVAL"
+            # Amount within manager's limit OR has senior approval
+            - any:
+                of:
+                  - expr: R.attr.amount < P.attr.approval_limit
+                  - expr: R.attr.senior_approved == true
+            # Manager's department OR assigned reviewer
+            - any:
+                of:
+                  - expr: R.attr.department == P.attr.department
+                  - expr: P.id in R.attr.assigned_reviewers
+```
+
+```yaml Time and IP-Based Access
+rules:
+  - actions: ["admin:*"]
+    effect: EFFECT_ALLOW
+    roles: ["admin"]
+    condition:
+      match:
+        all:
+          of:
+            # Only from corporate network
+            - expr: P.attr.ip_address.inIPAddrRange("10.0.0.0/8")
+            # Only during business hours
+            - expr: now().getHours() >= 8 && now().getHours() < 18
+            # Only on weekdays
+            - expr: now().getDayOfWeek() < 5
+```
+
+```yaml Dynamic Permissions Based on Resource Value
+rules:
+  - actions: ["approve"]
+    effect: EFFECT_ALLOW
+    condition:
+      match:
+        any:
+          of:
+            # Low value: any manager
+            - all:
+                of:
+                  - expr: R.attr.value < 1000
+                  - expr: '"manager" in P.roles'
+            # Medium value: senior manager in same dept
+            - all:
+                of:
+                  - expr: R.attr.value >= 1000 && R.attr.value < 10000
+                  - expr: '"senior_manager" in P.roles'
+                  - expr: R.attr.department == P.attr.department
+            # High value: director level
+            - all:
+                of:
+                  - expr: R.attr.value >= 10000
+                  - expr: '"director" in P.roles'
+```
+</CodeGroup>
+
+## Debugging Conditions
+
+### Common Errors
+
+<AccordionGroup>
+  <Accordion title="Syntax Error: unexpected token">
+    Check for:
+    - Missing quotes around strings: `"PENDING"` not `PENDING`
+    - Mismatched parentheses or brackets
+    - Using `=` instead of `==` for comparison
+    
+    ```yaml
+    # Wrong
+    expr: R.attr.status = PENDING
+    
+    # Correct
+    expr: R.attr.status == "PENDING"
+    ```
+  </Accordion>
+  
+  <Accordion title="Undefined field or variable">
+    Verify:
+    - Attribute paths match request data structure
+    - Variables are defined before use
+    - Correct prefix (V. for variables, C. for constants)
+    
+    ```yaml
+    # If error: "undefined field 'owner'"
+    # Check request data:
+    # - R.attr.owner (correct)
+    # - R.owner (wrong - owner is in attr)
+    ```
+  </Accordion>
+  
+  <Accordion title="Type mismatch">
+    Ensure types match:
+    
+    ```yaml
+    # Wrong: comparing string to int
+    expr: R.attr.count == "5"
+    
+    # Correct
+    expr: R.attr.count == 5
+    
+    # Use type conversions if needed
+    expr: int(R.attr.count_str) == 5
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Testing Expressions
+
+Use `cerbos compile` to validate:
+
+```bash
+cerbos compile /path/to/policies
+```
+
+Errors will show the exact expression and line number:
+
+```
+ERROR [policy.yaml:15] Invalid expression: 
+  R.attr.owner = P.id
+                ^
+Syntax error: unexpected token '='
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Keep Expressions Simple">
+    Break complex logic into variables:
+    
+    ```yaml
+    # Instead of:
+    expr: R.attr.owner == P.id || ("manager" in P.roles && R.attr.department == P.attr.department)
+    
+    # Use:
+    variables:
+      is_owner: R.attr.owner == P.id
+      is_dept_manager: '"manager" in P.roles && R.attr.department == P.attr.department'
+    
+    expr: V.is_owner || V.is_dept_manager
+    ```
+  </Step>
+  
+  <Step title="Use Shorthand Variables">
+    Prefer `R.attr.owner` over `request.resource.attr.owner` for readability.
+  </Step>
+  
+  <Step title="Check Field Existence">
+    Use `has()` for optional fields:
+    
+    ```yaml
+    expr: has(R.attr.owner) && R.attr.owner == P.id
+    ```
+  </Step>
+  
+  <Step title="Extract Common Patterns">
+    Use exported variables/constants for shared logic across policies.
+  </Step>
+  
+  <Step title="Document Complex Logic">
+    Add comments in multi-line expressions:
+    
+    ```yaml
+    expr: |-
+      // Check if user can approve based on amount and role
+      (R.attr.amount < 1000 && "manager" in P.roles) ||
+      (R.attr.amount < 10000 && "senior_manager" in P.roles) ||
+      ("director" in P.roles)
+    ```
+  </Step>
+</Steps>
+
+## Performance Tips
+
+- **Avoid expensive operations in conditions**: Complex regex, large list iterations
+- **Order matters in `all` and `any`**: Put cheaper checks first
+- **Use constants**: Cached at compile time, faster than variables
+- **Minimize nested checks**: Flatten when possible
+
+```yaml
+# Slower: Check expensive condition first
+all:
+  of:
+    - expr: R.attr.content.matches("^[A-Z][a-z]{100,}$")  # Expensive regex
+    - expr: R.attr.owner == P.id  # Cheap check
+
+# Faster: Cheap check first (fail fast)
+all:
+  of:
+    - expr: R.attr.owner == P.id  # Cheap check first
+    - expr: R.attr.content.matches("^[A-Z][a-z]{100,}$")  # Only if needed
+```
+
+## CEL Reference
+
+For complete CEL syntax, see:
+- [CEL Specification](https://github.com/google/cel-spec)
+- [CEL Language Definition](https://github.com/google/cel-spec/blob/master/doc/langdef.md)
+- [Cerbos Conditions Documentation](https://docs.cerbos.dev/cerbos/latest/policies/conditions.html)
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Resource Policies" icon="file-shield" href="/policies/resource-policies">
+    Apply conditions in resource policies
+  </Card>
+  
+  <Card title="Derived Roles" icon="users-gear" href="/policies/derived-roles">
+    Use conditions for dynamic roles
+  </Card>
+  
+  <Card title="Testing" icon="flask" href="/policies/testing">
+    Test your conditions
+  </Card>
+</CardGroup>

@@ -1,0 +1,359 @@
+---
+title: "cerbosctl decisions"
+description: "Interactive viewer for exploring decision logs from Cerbos audit logs"
+---
+
+## Overview
+
+The `decisions` command launches an interactive terminal UI for viewing and exploring decision logs from your Cerbos server. It provides a user-friendly interface to analyze authorization decisions, inspect request details, and understand policy evaluation results.
+
+<Note>
+Audit logging must be enabled on the Cerbos server for this command to work. The server must be configured to capture decision logs.
+</Note>
+
+## Syntax
+
+```bash
+cerbosctl decisions [flags]
+```
+
+## Features
+
+The interactive UI provides:
+
+- **Decision Browser**: Table view of all decision log entries with metadata
+- **Check Details Panel**: Detailed view of CheckResources API calls
+- **Plan Details Panel**: Detailed view of PlanResources API calls
+- **Syntax Highlighting**: Color-coded JSON output for easy reading
+- **Keyboard Navigation**: Efficient navigation using keyboard shortcuts
+
+## Usage Examples
+
+<Steps>
+
+<Step title="View the last 10 decision records">
+
+```bash
+cerbosctl decisions --tail=10
+```
+
+Launches the interactive viewer showing the 10 most recent decision log entries.
+
+</Step>
+
+<Step title="View decisions from a specific time range">
+
+```bash
+cerbosctl decisions --between=2021-07-01T00:00:00Z,2021-07-02T00:00:00Z
+```
+
+Shows decisions captured between midnight July 1, 2021 and midnight July 2, 2021.
+
+</Step>
+
+<Step title="View decisions from a start time to now">
+
+```bash
+cerbosctl decisions --between=2021-07-01T00:00:00Z
+```
+
+Shows all decisions from midnight July 1, 2021 to the current time.
+
+</Step>
+
+<Step title="View decisions from the last N hours/minutes/seconds">
+
+```bash
+# Last 3 hours
+cerbosctl decisions --since=3h
+
+# Last 30 minutes
+cerbosctl decisions --since=30m
+
+# Last 45 seconds
+cerbosctl decisions --since=45s
+```
+
+Shows decisions from N time units ago to now. Unit suffixes: `h`=hours, `m`=minutes, `s`=seconds.
+
+</Step>
+
+<Step title="Look up a specific decision by Call ID">
+
+```bash
+cerbosctl decisions --lookup=01F9Y5MFYTX7Y87A30CTJ2FB0S
+```
+
+Retrieves and displays a specific decision log entry using its Cerbos Call ID.
+
+</Step>
+
+</Steps>
+
+## Filter Flags
+
+Only one filter can be used at a time:
+
+| Flag | Description | Example |
+|------|-------------|----------|
+| `--tail <n>` | View the last N records | `--tail=50` |
+| `--between <time1>[,<time2>]` | View records between timestamps (ISO-8601 format) | `--between=2021-07-01T00:00:00Z,2021-07-02T00:00:00Z` |
+| `--since <duration>` | View records from X ago to now (h=hours, m=minutes, s=seconds) | `--since=2h30m` |
+| `--lookup <call-id>` | View a specific record by Cerbos Call ID | `--lookup=01F9Y5MFYTX7Y87A30CTJ2FB0S` |
+
+<Note>
+If no filter is specified, the command defaults to `--tail=30` (showing the last 30 records).
+</Note>
+
+<Warning>
+You cannot combine multiple filters. Only one of `--tail`, `--between`, `--since`, or `--lookup` can be used per command.
+</Warning>
+
+## Interactive UI Navigation
+
+### Keyboard Shortcuts
+
+#### Browser Panel
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `⭾` | Switch between panes (Decisions table and Data view) |
+| `Shift+Tab` / `⮀` | Switch panes in reverse |
+| `↑` / `↓` | Navigate through decision entries |
+| `Enter` / `⏎` | Open detailed view for selected entry |
+| `Q` | Exit the viewer |
+| `Esc` | Exit the viewer |
+
+#### Check Details Panel
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `⭾` | Switch between panes |
+| `Shift+Tab` / `⮀` | Switch panes in reverse |
+| `I` | Jump to Inputs list |
+| `P` | Jump to Principal view |
+| `R` | Jump to Resource view |
+| `A` | Jump to Actions table |
+| `Esc` | Return to browser |
+| `Q` | Exit the viewer |
+
+#### Plan Details Panel
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `⭾` | Switch between panes |
+| `Shift+Tab` / `⮀` | Switch panes in reverse |
+| `P` | Jump to Principal view |
+| `R` | Jump to Resource view |
+| `L` | Jump to Plan view |
+| `Esc` | Return to browser |
+| `Q` | Exit the viewer |
+
+## Understanding the UI
+
+### Browser Panel
+
+The main panel displays a table of decision log entries:
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║                        Decisions                             ║
+╠═══════════════════╤════════════════════╤═══════════════════╣
+║ Call ID           │ Timestamp          │ Request ID        ║
+╠═══════════════════╪════════════════════╪═══════════════════╣
+║ 01ABCD...         │ 2021-07-01T10:30   │ test-request-1    ║
+║ 01EFGH...         │ 2021-07-01T10:35   │ test-request-2    ║
+╚═══════════════════╧════════════════════╧═══════════════════╝
+```
+
+Columns:
+- **Call ID**: Unique identifier for the API call
+- **Timestamp**: When the decision was made
+- **Request ID**: Application-provided request identifier
+- **Address**: Client IP address
+- **User Agent**: Client user agent string
+- **Forwarded For**: X-Forwarded-For header value
+
+### Check Details Panel
+
+When viewing a CheckResources decision, you'll see:
+
+- **Inputs List**: All resource check inputs in the request
+- **Principal View**: Complete principal object (user/entity making the request)
+- **Resource View**: Complete resource object being accessed
+- **Actions Table**: Authorization result for each action
+  - ✔ (green) = EFFECT_ALLOW
+  - ✖ (red) = EFFECT_DENY
+- **Effective Derived Roles**: Derived roles that applied to this principal
+
+### Plan Details Panel
+
+When viewing a PlanResources decision, you'll see:
+
+- **Principal View**: Complete principal object
+- **Resource View**: Resource kind and query context
+- **Plan View**: Query plan for filtering resources
+- **Expression**: Filter expression to apply to your data store
+
+## Examples of Common Workflows
+
+### Debug a Failed Authorization
+
+<Steps>
+
+<Step title="Launch the viewer">
+
+```bash
+cerbosctl decisions --since=1h
+```
+
+</Step>
+
+<Step title="Find the decision">
+
+Use arrow keys to navigate to the relevant decision entry.
+
+</Step>
+
+<Step title="View details">
+
+Press `Enter` to open the detailed view.
+
+</Step>
+
+<Step title="Inspect the results">
+
+In the Check Details panel:
+- Press `P` to view principal attributes
+- Press `R` to view resource attributes  
+- Press `A` to view action results
+- Check which policies were evaluated
+- Review effective derived roles
+
+</Step>
+
+</Steps>
+
+### Analyze Query Plans
+
+<Steps>
+
+<Step title="Find PlanResources calls">
+
+```bash
+cerbosctl decisions --tail=100
+```
+
+Navigate through entries to find PlanResources API calls.
+
+</Step>
+
+<Step title="Open plan details">
+
+Press `Enter` on a PlanResources entry.
+
+</Step>
+
+<Step title="Review the query plan">
+
+- Press `L` to focus on the plan view
+- Examine the filter expression
+- Check the filter debug output
+- Verify the principal and resource context
+
+</Step>
+
+</Steps>
+
+### Monitor Real-time Decisions
+
+While cerbosctl doesn't have a live follow mode, you can repeatedly check recent decisions:
+
+```bash
+# Check last minute of decisions
+cerbosctl decisions --since=1m
+
+# Exit and run again to see new decisions
+cerbosctl decisions --since=1m
+```
+
+## Data Format
+
+The Data pane in the Browser panel shows the complete decision log entry in JSON format with syntax highlighting. This includes:
+
+### CheckResources Entry
+
+```json
+{
+  "callId": "01F9Y5MFYTX7Y87A30CTJ2FB0S",
+  "timestamp": "2021-07-01T10:30:00Z",
+  "peer": {
+    "address": "192.168.1.100",
+    "userAgent": "cerbos-sdk-go/0.1.0",
+    "forwardedFor": ""
+  },
+  "checkResources": {
+    "inputs": [...],
+    "outputs": [...]
+  }
+}
+```
+
+### PlanResources Entry
+
+```json
+{
+  "callId": "01F9Y5MFYTX7Y87A30CTJ2FB0S",
+  "timestamp": "2021-07-01T10:30:00Z",
+  "peer": {...},
+  "planResources": {
+    "input": {...},
+    "output": {
+      "filter": {...},
+      "filterDebug": "..."
+    }
+  }
+}
+```
+
+## Troubleshooting
+
+### No logs returned
+
+**Problem**: The viewer opens but shows no entries.
+
+**Solutions**:
+- Verify audit logging is enabled on the Cerbos server
+- Check that decision logs are being captured (not just access logs)
+- Try a wider time range: `--since=24h`
+- Verify the server has processed authorization requests
+
+### Connection errors
+
+**Problem**: Cannot connect to the Cerbos server.
+
+**Solutions**:
+- Verify the server address: `--server=localhost:3593`
+- Check authentication credentials
+- Ensure Admin API is enabled
+- Verify network connectivity
+
+### Terminal display issues
+
+**Problem**: UI appears garbled or doesn't render correctly.
+
+**Solutions**:
+- Ensure your terminal supports ANSI colors
+- Increase terminal size (minimum 80x24 recommended)
+- Try a different terminal emulator
+- Check terminal type: `echo $TERM`
+
+## Performance Considerations
+
+- **Large Result Sets**: Fetching many records (e.g., `--tail=10000`) may take time and use memory
+- **Network Latency**: Initial load time depends on network speed to the Cerbos server
+- **Terminal Rendering**: Very large JSON objects may slow down scrolling
+
+<Tip>
+For analyzing large volumes of logs, consider using the [`audit`](/cli/cerbosctl/audit) command with `--raw` output and process the data with tools like `jq`.
+</Tip>

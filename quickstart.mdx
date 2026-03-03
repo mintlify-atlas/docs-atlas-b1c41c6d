@@ -1,80 +1,475 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get Cerbos running locally and make your first authorization check in 5 minutes"
 ---
 
-## Get started in three steps
+## What You'll Build
 
-Get your documentation site running locally and make your first customization.
+In this quickstart, you'll:
 
-### Step 1: Set up your local environment
+1. Start a Cerbos PDP instance
+2. Make an authorization check (it will fail - no policies yet!)
+3. Create policies for an album-sharing application
+4. See authorization decisions change as you add rules
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+By the end, you'll understand how Cerbos evaluates policies and makes authorization decisions.
+
+<Note>
+  **Prerequisites:** Docker installed, or download the [Cerbos binary](/installation/binary)
+</Note>
+
+## Step 1: Start Cerbos
+
+Create a directory for your policies and start Cerbos:
+
+<CodeGroup>
+```bash Docker
+# Create policy directory
+mkdir -p cerbos-quickstart/policies
+
+# Start Cerbos PDP
+docker run --rm --name cerbos -d \
+  -v $(pwd)/cerbos-quickstart/policies:/policies \
+  -p 3592:3592 \
+  -p 3593:3593 \
+  ghcr.io/cerbos/cerbos:latest
+```
+
+```bash Binary
+# Create policy directory
+mkdir -p cerbos-quickstart/policies
+
+# Create config file
+cat > cerbos-quickstart/.cerbos.yaml <<EOF
+---
+server:
+  httpListenAddr: ":3592"
+storage:
+  driver: "disk"
+  disk:
+    directory: policies
+EOF
+
+# Start Cerbos
+cd cerbos-quickstart
+./cerbos server --config=.cerbos.yaml
+```
+</CodeGroup>
+
+<Info>
+  **API Browser**: Open http://localhost:3592 in your browser to explore the Cerbos API with built-in documentation.
+</Info>
+
+## Step 2: Try an Authorization Check
+
+Let's check if `bugs_bunny` can view and comment on album resources:
+
+<CodeGroup>
+```bash cURL
+cat <<EOF | curl --silent "http://localhost:3592/api/check/resources?pretty" -d @-
+{
+  "requestId": "quickstart",
+  "principal": {
+    "id": "bugs_bunny",
+    "roles": ["user"],
+    "attr": {
+      "beta_tester": true
+    }
+  },
+  "resources": [
+    {
+      "actions": ["view:public", "comment"],
+      "resource": {
+        "kind": "album:object",
+        "id": "BUGS001",
+        "attr": {
+          "owner": "bugs_bunny",
+          "public": false,
+          "flagged": false
+        }
+      }
+    },
+    {
+      "actions": ["view:public", "comment"],
+      "resource": {
+        "kind": "album:object",
+        "id": "DAFFY002",
+        "attr": {
+          "owner": "daffy_duck",
+          "public": true,
+          "flagged": false
+        }
+      }
+    }
+  ]
+}
+EOF
+```
+
+```go Go SDK
+package main
+
+import (
+	"context"
+	"log"
+	"github.com/cerbos/cerbos-sdk-go/cerbos"
+)
+
+func main() {
+	c, err := cerbos.New("localhost:3593", cerbos.WithPlaintext())
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+
+	principal := cerbos.NewPrincipal("bugs_bunny", "user")
+	principal.WithAttr("beta_tester", true)
+
+	r1 := cerbos.NewResource("album:object", "BUGS001")
+	r1.WithAttributes(map[string]any{
+		"owner":   "bugs_bunny",
+		"public":  false,
+		"flagged": false,
+	})
+
+	r2 := cerbos.NewResource("album:object", "DAFFY002")
+	r2.WithAttributes(map[string]any{
+		"owner":   "daffy_duck",
+		"public":  true,
+		"flagged": false,
+	})
+
+	batch := cerbos.NewResourceBatch()
+	batch.Add(r1, "view:public", "comment")
+	batch.Add(r2, "view:public", "comment")
+
+	resp, err := c.CheckResources(context.Background(), principal, batch)
+	if err != nil {
+		log.Fatalf("Failed to check resources: %v", err)
+	}
+	log.Printf("%v", resp)
+}
+```
+
+```python Python SDK
+from cerbos.sdk.client import CerbosClient
+from cerbos.sdk.model import Principal, Resource, ResourceList
+
+with CerbosClient("http://localhost:3593", plaintext=True) as c:
+    principal = Principal(
+        "bugs_bunny",
+        roles=["user"],
+        attr={"beta_tester": True}
+    )
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    resources = ResourceList()
+    resources.add(
+        Resource(
+            "BUGS001",
+            "album:object",
+            attr={
+                "owner": "bugs_bunny",
+                "public": False,
+                "flagged": False
+            }
+        ),
+        actions=["view:public", "comment"]
+    )
+    resources.add(
+        Resource(
+            "DAFFY002",
+            "album:object",
+            attr={
+                "owner": "daffy_duck",
+                "public": True,
+                "flagged": False
+            }
+        ),
+        actions=["view:public", "comment"]
+    )
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    resp = c.check_resources(principal, resources)
+    print(resp)
+```
 
-### Step 2: Deploy your changes
+```javascript JavaScript SDK
+const { GRPC: Cerbos } = require("@cerbos/grpc");
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
+const cerbos = new Cerbos("localhost:3593", { tls: false });
+
+const decision = await cerbos.checkResources({
+  requestId: "quickstart",
+  principal: {
+    id: "bugs_bunny",
+    roles: ["user"],
+    attr: { beta_tester: true }
+  },
+  resources: [
+    {
+      actions: ["view:public", "comment"],
+      resource: {
+        kind: "album:object",
+        id: "BUGS001",
+        attr: {
+          owner: "bugs_bunny",
+          public: false,
+          flagged: false
+        }
+      }
+    },
+    {
+      actions: ["view:public", "comment"],
+      resource: {
+        kind: "album:object",
+        id: "DAFFY002",
+        attr: {
+          owner: "daffy_duck",
+          public: true,
+          flagged: false
+        }
+      }
+    }
+  ]
+});
+
+console.log(decision);
+```
+</CodeGroup>
+
+### Response: Everything Denied
+
+```json
+{
+  "requestId": "quickstart",
+  "results": [
+    {
+      "resource": {
+        "id": "BUGS001",
+        "kind": "album:object"
+      },
+      "actions": {
+        "comment": "EFFECT_DENY",
+        "view:public": "EFFECT_DENY"
+      }
+    },
+    {
+      "resource": {
+        "id": "DAFFY002",
+        "kind": "album:object"
+      },
+      "actions": {
+        "comment": "EFFECT_DENY",
+        "view:public": "EFFECT_DENY"
+      }
+    }
+  ]
+}
+```
+
+<Warning>
+  Bugs Bunny is denied access to **everything** - even his own album! This is because there are no policies defined yet. Cerbos denies by default.
+</Warning>
+
+## Step 3: Create Derived Roles
+
+Let's define a derived role that assigns the `owner` role when a user owns a resource:
+
+```bash Create derived_roles_common.yaml
+cat > cerbos-quickstart/policies/derived_roles_common.yaml <<EOF
+---
+apiVersion: "api.cerbos.dev/v1"
+derivedRoles:
+  name: common_roles
+  definitions:
+    - name: owner
+      parentRoles: ["user"]
+      condition:
+        match:
+          expr: request.resource.attr.owner == request.principal.id
+EOF
+```
+
+<Info>
+  **Derived Roles** dynamically assign roles based on conditions. Here, users with the `user` role get the `owner` derived role when they own the resource.
+</Info>
+
+## Step 4: Create a Resource Policy
+
+Now create a policy that gives owners full access to their albums:
+
+```bash Create resource_album.yaml
+cat > cerbos-quickstart/policies/resource_album.yaml <<EOF
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  importDerivedRoles:
+    - common_roles
+  resource: "album:object"
+  rules:
+    - actions: ['*']
+      effect: EFFECT_ALLOW
+      derivedRoles:
+        - owner
+EOF
+```
+
+Cerbos automatically detects the new policy files. Try the request again!
+
+### Response: Owner Access Granted
+
+```json
+{
+  "requestId": "quickstart",
+  "results": [
+    {
+      "resource": {
+        "id": "BUGS001",
+        "kind": "album:object"
+      },
+      "actions": {
+        "comment": "EFFECT_ALLOW",
+        "view:public": "EFFECT_ALLOW"
+      }
+    },
+    {
+      "resource": {
+        "id": "DAFFY002",
+        "kind": "album:object"
+      },
+      "actions": {
+        "comment": "EFFECT_DENY",
+        "view:public": "EFFECT_DENY"
+      }
+    }
+  ]
+}
+```
+
+<Check>
+  **Success!** Bugs Bunny can now access his own album (BUGS001) but not Daffy's album (DAFFY002).
+</Check>
+
+## Step 5: Add Conditional Access
+
+Let's allow all users to view public albums by adding a conditional rule:
+
+```bash Update resource_album.yaml
+cat > cerbos-quickstart/policies/resource_album.yaml <<EOF
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  version: "default"
+  importDerivedRoles:
+    - common_roles
+  resource: "album:object"
+  rules:
+    - actions: ['*']
+      effect: EFFECT_ALLOW
+      derivedRoles:
+        - owner
+
+    - actions: ['view:public']
+      effect: EFFECT_ALLOW
+      roles:
+        - user
+      condition:
+        match:
+          expr: request.resource.attr.public == true
+EOF
+```
+
+Try the request one more time:
+
+### Response: Public Access Granted
+
+```json
+{
+  "requestId": "quickstart",
+  "results": [
+    {
+      "resource": {
+        "id": "BUGS001",
+        "kind": "album:object"
+      },
+      "actions": {
+        "comment": "EFFECT_ALLOW",
+        "view:public": "EFFECT_ALLOW"
+      }
+    },
+    {
+      "resource": {
+        "id": "DAFFY002",
+        "kind": "album:object"
+      },
+      "actions": {
+        "comment": "EFFECT_DENY",
+        "view:public": "EFFECT_ALLOW"
+      }
+    }
+  ]
+}
+```
+
+<Check>
+  Now Bugs Bunny can view Daffy's **public** album, but still can't comment on it!
+</Check>
+
+## Challenge: Allow Comments on Public Albums
+
+Can you figure out how to update the policy to allow users to comment on public albums?
+
+<Accordion title="Solution">
+  Add `comment` to the actions list in the public album rule:
+  
+  ```yaml
+  - actions: ['view:public', 'comment']
+    effect: EFFECT_ALLOW
+    roles:
+      - user
+    condition:
+      match:
+        expr: request.resource.attr.public == true
+  ```
 </Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+## Clean Up
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+Stop the Cerbos server:
 
-### Step 3: Go live
+```bash
+docker kill cerbos
+```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+## What You Learned
 
-## Next steps
+In this quickstart, you:
 
-Now that you have your docs running, explore these key features:
+- ✅ Started a Cerbos Policy Decision Point
+- ✅ Made authorization checks via the CheckResources API
+- ✅ Created derived roles for dynamic role assignment
+- ✅ Wrote resource policies with role-based and condition-based rules
+- ✅ Saw how policies update in real-time without restarting Cerbos
+
+## Next Steps
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Core Concepts" icon="book" href="/concepts">
+    Understand Principals, Resources, Actions, and Policies in depth
+  </Card>
+  
+  <Card title="Policy Types" icon="file-code" href="/policies/overview">
+    Explore resource policies, derived roles, and principal policies
+  </Card>
+  
+  <Card title="Deploy Cerbos" icon="server" href="/deployment/kubernetes">
+    Learn deployment options for production environments
+  </Card>
+  
+  <Card title="SDKs" icon="code" href="/integration/sdks">
+    Integrate Cerbos with Go, Python, JavaScript, Java, .NET, PHP, Ruby, or Rust
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Need help?** Join our [Slack community](http://go.cerbos.io/slack) or email help@cerbos.dev
 </Note>

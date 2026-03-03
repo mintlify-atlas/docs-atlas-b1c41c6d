@@ -1,0 +1,551 @@
+---
+title: "Kubernetes Deployment"
+description: "Deploy Cerbos on Kubernetes using Helm charts with service and sidecar patterns"
+---
+
+Cerbos can be deployed on Kubernetes using the official Helm chart, which supports both standalone service and sidecar deployment patterns.
+
+## Prerequisites
+
+- Kubernetes cluster version 1.23.0 or higher
+- Helm 3.x installed
+- kubectl configured to access your cluster
+
+## Installation
+
+<Steps>
+
+### Add the Helm repository
+
+```bash
+helm repo add cerbos https://cerbos.github.io/helm-charts
+helm repo update
+```
+
+### Install Cerbos
+
+```bash
+helm install cerbos cerbos/cerbos --namespace cerbos --create-namespace
+```
+
+This installs Cerbos with default configuration values.
+
+### Verify the installation
+
+```bash
+kubectl get pods -n cerbos
+kubectl get svc -n cerbos
+```
+
+</Steps>
+
+## Configuration
+
+### Default Ports
+
+Cerbos exposes two service ports:
+
+- **HTTP Port**: `3592` - REST API and health checks
+- **gRPC Port**: `3593` - gRPC API
+
+### Service Configuration
+
+The Helm chart creates a Kubernetes Service with configurable settings:
+
+```yaml
+service:
+  type: ClusterIP
+  httpPort: 3592
+  grpcPort: 3593
+  annotations: {}
+```
+
+<Note>
+For external access, change the service type to `LoadBalancer` or `NodePort`.
+</Note>
+
+### Deployment Options
+
+The chart supports two deployment types:
+
+<CodeGroup>
+
+```yaml Deployment (default)
+type: deployment
+replicaCount: 3
+```
+
+```yaml DaemonSet
+type: daemonset
+service:
+  internalTrafficPolicy: Local
+```
+
+</CodeGroup>
+
+## Storage Backends
+
+### Disk Storage with Volume
+
+Mount a volume containing policies:
+
+```yaml
+volumes:
+  - name: cerbos-policies
+    hostPath:
+      path: /data/cerbos-policies
+
+volumeMounts:
+  - name: cerbos-policies
+    mountPath: /policies
+    readOnly: true
+
+cerbos:
+  config:
+    storage:
+      driver: "disk"
+      disk:
+        directory: /policies
+        watchForChanges: true
+```
+
+### Git Repository Storage
+
+Connect Cerbos to a Git repository for policy management:
+
+<Steps>
+
+### Create GitHub token secret
+
+```bash
+export PAT=your_github_token
+kubectl create secret generic cerbos-github-token \
+  --from-literal=GITHUB_TOKEN=$PAT \
+  -n cerbos
+```
+
+### Configure Git storage
+
+Create a `values-git.yaml` file:
+
+```yaml
+cerbos:
+  config:
+    storage:
+      driver: "git"
+      git:
+        protocol: https
+        url: https://github.com/your-org/policies.git
+        branch: main
+        subDir: policies
+        checkoutDir: /work
+        updatePollInterval: 60s
+        https:
+          username: ${GITHUB_TOKEN}
+          password: ""
+
+envFrom:
+  - secretRef:
+      name: cerbos-github-token
+```
+
+### Install with Git configuration
+
+```bash
+helm install cerbos cerbos/cerbos -f values-git.yaml -n cerbos
+```
+
+</Steps>
+
+### Cerbos Hub Storage
+
+Connect to Cerbos Hub for centralized policy management:
+
+<Steps>
+
+### Create Hub credentials secret
+
+```bash
+kubectl create secret generic cerbos-hub-credentials \
+  --from-literal=CERBOS_HUB_CLIENT_ID=<your_client_id> \
+  --from-literal=CERBOS_HUB_CLIENT_SECRET=<your_client_secret> \
+  --from-literal=CERBOS_HUB_DEPLOYMENT_ID=<your_deployment_id> \
+  -n cerbos
+```
+
+### Configure Hub storage
+
+```yaml
+cerbos:
+  config:
+    storage:
+      driver: "hub"
+      hub:
+        remote:
+          deploymentID: "${CERBOS_HUB_DEPLOYMENT_ID}"
+    audit:
+      enabled: true
+      backend: "hub"
+      hub:
+        storagePath: /audit_logs
+
+envFrom:
+  - secretRef:
+      name: cerbos-hub-credentials
+
+volumes:
+  - name: cerbos-audit-logs
+    emptyDir: {}
+
+volumeMounts:
+  - name: cerbos-audit-logs
+    mountPath: /audit_logs
+```
+
+</Steps>
+
+## TLS Configuration
+
+### Using cert-manager
+
+The chart integrates with cert-manager for automatic certificate management:
+
+```yaml
+certManager:
+  certSpec:
+    issuerRef:
+      name: letsencrypt-prod
+      kind: ClusterIssuer
+    dnsNames:
+      - cerbos.example.com
+```
+
+### Using existing TLS secret
+
+<Steps>
+
+### Create TLS secret
+
+```bash
+kubectl create secret tls cerbos-tls \
+  --cert=path/to/tls.crt \
+  --key=path/to/tls.key \
+  -n cerbos
+```
+
+### Configure TLS
+
+```yaml
+cerbos:
+  tlsSecretName: cerbos-tls
+```
+
+</Steps>
+
+## Health Checks
+
+The deployment includes liveness and readiness probes:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /_cerbos/health
+    port: http
+    scheme: HTTP
+
+readinessProbe:
+  httpGet:
+    path: /_cerbos/health
+    port: http
+    scheme: HTTP
+```
+
+The health endpoint returns a 200 status when Cerbos is ready.
+
+## Resource Limits
+
+Configure resource requests and limits:
+
+```yaml
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+```
+
+## Autoscaling
+
+Enable horizontal pod autoscaling:
+
+```yaml
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+```
+
+<Warning>
+Autoscaling is only available when using `type: deployment`.
+</Warning>
+
+## Sidecar Deployment
+
+Deploy Cerbos as a sidecar container alongside your application:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: my-app:latest
+          env:
+            - name: CERBOS_ADDRESS
+              value: "localhost:3593"
+        
+        - name: cerbos
+          image: ghcr.io/cerbos/cerbos:0.52.0
+          args:
+            - "server"
+            - "--config=/config/.cerbos.yaml"
+            - "--log-level=INFO"
+          ports:
+            - name: http
+              containerPort: 3592
+            - name: grpc
+              containerPort: 3593
+          livenessProbe:
+            httpGet:
+              path: /_cerbos/health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /_cerbos/health
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: policies
+              mountPath: /policies
+              readOnly: true
+      
+      volumes:
+        - name: config
+          configMap:
+            name: cerbos-config
+        - name: policies
+          configMap:
+            name: cerbos-policies
+```
+
+## Environment Variables
+
+Add environment variables to the deployment:
+
+```yaml
+env:
+  - name: CERBOS_LOG_LEVEL
+    value: "DEBUG"
+  - name: CUSTOM_VAR
+    valueFrom:
+      secretKeyRef:
+        name: my-secret
+        key: custom-key
+
+envFrom:
+  - configMapRef:
+      name: cerbos-env
+  - secretRef:
+      name: cerbos-secrets
+```
+
+## Monitoring
+
+### Prometheus Integration
+
+The chart automatically adds Prometheus annotations for service discovery:
+
+```yaml
+cerbos:
+  prometheusPodAnnotationsEnabled: true
+```
+
+This adds the following annotations to pods:
+
+```yaml
+prometheus.io/scrape: "true"
+prometheus.io/port: "3592"
+prometheus.io/path: "/_cerbos/metrics"
+prometheus.io/scheme: "http"
+```
+
+Metrics are available at: `http://cerbos:3592/_cerbos/metrics`
+
+## Advanced Configuration
+
+### Pod Security Context
+
+```yaml
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+```
+
+### Node Affinity and Tolerations
+
+```yaml
+nodeSelector:
+  workload: cerbos
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - cerbos
+          topologyKey: kubernetes.io/hostname
+
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "cerbos"
+    effect: "NoSchedule"
+```
+
+### Topology Spread Constraints
+
+```yaml
+topologySpreadConstraints:
+  - topologyKey: topology.kubernetes.io/zone
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway
+  - topologyKey: kubernetes.io/hostname
+    maxSkew: 1
+    whenUnsatisfiable: DoNotSchedule
+```
+
+## Complete Example
+
+A production-ready `values.yaml` configuration:
+
+```yaml
+replicaCount: 3
+
+image:
+  repository: ghcr.io/cerbos/cerbos
+  tag: "0.52.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  httpPort: 3592
+  grpcPort: 3593
+
+cerbos:
+  httpPort: 3592
+  grpcPort: 3593
+  logLevel: INFO
+  prometheusPodAnnotationsEnabled: true
+  tlsSecretName: cerbos-tls
+  config:
+    storage:
+      driver: "git"
+      git:
+        protocol: https
+        url: https://github.com/org/policies.git
+        branch: main
+        updatePollInterval: 60s
+        https:
+          username: ${GITHUB_TOKEN}
+          password: ""
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+envFrom:
+  - secretRef:
+      name: cerbos-github-token
+
+topologySpreadConstraints:
+  - topologyKey: topology.kubernetes.io/zone
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway
+```
+
+Install with this configuration:
+
+```bash
+helm install cerbos cerbos/cerbos \
+  -f values.yaml \
+  --namespace cerbos \
+  --create-namespace
+```
+
+## Upgrading
+
+Upgrade an existing deployment:
+
+```bash
+# Update repository
+helm repo update
+
+# Upgrade release
+helm upgrade cerbos cerbos/cerbos \
+  -f values.yaml \
+  -n cerbos
+```
+
+## Uninstalling
+
+Remove the Cerbos deployment:
+
+```bash
+helm uninstall cerbos -n cerbos
+kubectl delete namespace cerbos
+```

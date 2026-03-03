@@ -1,0 +1,609 @@
+---
+title: "Resource Policies"
+description: "Define access control rules for application resources with resource policies"
+---
+
+## Overview
+
+Resource policies define **who can do what** on a specific type of resource in your application. They are the primary way to specify authorization rules in Cerbos.
+
+A resource policy:
+- Applies to a **resource kind** (e.g., `document`, `project`, `leave_request`)
+- Contains **rules** that match actions to roles/derived roles
+- Can include **conditions** for attribute-based access control
+- Supports **versioning** for gradual rollouts and backwards compatibility
+
+## Basic Structure
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: "document"       # Resource kind
+  version: "default"         # Policy version
+  rules:                     # List of authorization rules
+    - actions: ["view", "edit"]
+      effect: EFFECT_ALLOW
+      roles: ["user"]
+```
+
+### Required Fields
+
+<ParamField path="resource" type="string" required>
+  The resource kind this policy applies to. Should match the `kind` field in your CheckResources API requests.
+</ParamField>
+
+<ParamField path="version" type="string" required>
+  Policy version identifier. Use `"default"` for the primary version, or semantic versions like `"v1"`, `"2024-01"` for alternatives.
+</ParamField>
+
+<ParamField path="rules" type="array" required>
+  List of rules defining access permissions. At least one rule is required.
+</ParamField>
+
+## Writing Rules
+
+Each rule specifies which actions are allowed or denied for certain roles.
+
+### Basic Rule Structure
+
+```yaml
+rules:
+  - actions: ["view", "create", "edit"]
+    effect: EFFECT_ALLOW
+    roles: ["user", "employee"]
+    name: "user-basic-access"  # Optional but recommended
+```
+
+<ParamField path="actions" type="array" required>
+  List of action names this rule applies to. Use `["*"]` as a wildcard for all actions. Supports wildcards like `"view:*"` to match `view:public`, `view:private`, etc.
+</ParamField>
+
+<ParamField path="effect" type="string" required>
+  Either `EFFECT_ALLOW` or `EFFECT_DENY`. DENY always takes precedence over ALLOW.
+</ParamField>
+
+<ParamField path="roles" type="array">
+  Static roles from the principal's identity. Use `["*"]` to match any role.
+</ParamField>
+
+<ParamField path="derivedRoles" type="array">
+  Dynamic roles computed at runtime. Must be defined in an imported derived roles policy.
+</ParamField>
+
+<ParamField path="name" type="string">
+  Optional identifier for the rule. Helpful for debugging and audit logs.
+</ParamField>
+
+<ParamField path="condition" type="object">
+  Optional condition expression that must evaluate to true. See [Conditions](/policies/conditions).
+</ParamField>
+
+<Note>
+  Each rule must specify either `roles` or `derivedRoles` (or both).
+</Note>
+
+## Complete Example
+
+Here's a full resource policy for a leave request system:
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+description: |
+  Access control rules for leave request resources
+
+variables:
+  pending_approval: '"PENDING_APPROVAL"'
+  principal_location: |-
+    (P.attr.ip_address.inIPAddrRange("10.20.0.0/16") ? "GB" : "")
+
+resourcePolicy:
+  resource: leave_request
+  version: "20210210"
+  
+  # Import derived roles definitions
+  importDerivedRoles:
+    - common_roles
+  
+  # JSON schema validation
+  schemas:
+    principalSchema:
+      ref: cerbos:///principal.json
+    resourceSchema:
+      ref: cerbos:///resources/leave_request.json
+  
+  rules:
+    # Admins can do everything
+    - actions: ["*"]
+      effect: EFFECT_ALLOW
+      roles: ["admin"]
+      name: admin-full-access
+    
+    # Employees can create leave requests
+    - actions: ["create"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["employee_that_owns_the_record"]
+    
+    # Owners and managers can view
+    - actions: ["view:*"]
+      effect: EFFECT_ALLOW
+      derivedRoles:
+        - employee_that_owns_the_record
+        - direct_manager
+    
+    # Public view for any employee
+    - actions: ["view:public"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["any_employee"]
+      name: public-view
+    
+    # Managers can approve pending requests
+    - actions: ["approve"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["direct_manager"]
+      condition:
+        match:
+          expr: request.resource.attr.status == V.pending_approval
+    
+    # Managers can delete in their geography
+    - actions: ["delete"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["direct_manager"]
+      condition:
+        match:
+          expr: request.resource.attr.geography == variables.principal_location
+```
+
+## Importing Derived Roles
+
+Resource policies can reference derived roles defined in separate policy files:
+
+```yaml
+resourcePolicy:
+  resource: document
+  version: "default"
+  importDerivedRoles:
+    - common_roles      # Imports from derived_roles/common_roles.yaml
+    - admin_roles       # Imports from derived_roles/admin_roles.yaml
+  rules:
+    - actions: ["*"]
+      effect: EFFECT_ALLOW
+      derivedRoles: ["owner"]  # Must be defined in imported files
+```
+
+<Warning>
+  Referenced derived roles must exist in the imported files, otherwise compilation will fail.
+</Warning>
+
+## Using Conditions
+
+Conditions add attribute-based access control to your rules:
+
+<CodeGroup>
+```yaml Simple Condition
+rules:
+  - actions: ["edit"]
+    effect: EFFECT_ALLOW
+    roles: ["user"]
+    condition:
+      match:
+        expr: request.resource.attr.owner == request.principal.id
+```
+
+```yaml Multiple Conditions (ALL)
+rules:
+  - actions: ["approve"]
+    effect: EFFECT_ALLOW
+    roles: ["manager"]
+    condition:
+      match:
+        all:
+          of:
+            - expr: request.resource.attr.status == "PENDING"
+            - expr: request.resource.attr.geography == request.principal.attr.geography
+```
+
+```yaml Multiple Conditions (ANY)
+rules:
+  - actions: ["view"]
+    effect: EFFECT_ALLOW
+    roles: ["user"]
+    condition:
+      match:
+        any:
+          of:
+            - expr: request.resource.attr.public == true
+            - expr: request.resource.attr.owner == request.principal.id
+```
+</CodeGroup>
+
+See [Conditions](/policies/conditions) for the complete reference.
+
+## Variables and Constants
+
+### Top-Level Variables
+
+Define reusable expressions at the top of your policy:
+
+```yaml
+---
+apiVersion: api.cerbos.dev/v1
+variables:
+  pending_status: '"PENDING_APPROVAL"'
+  is_owner: request.resource.attr.owner == request.principal.id
+  is_weekend: now().getDayOfWeek() > 5
+
+resourcePolicy:
+  resource: document
+  version: "default"
+  rules:
+    - actions: ["edit"]
+      effect: EFFECT_ALLOW
+      roles: ["user"]
+      condition:
+        match:
+          expr: V.is_owner  # Reference with V. prefix
+```
+
+### Importing Constants and Variables
+
+Share constants across policies:
+
+```yaml
+resourcePolicy:
+  resource: document
+  version: "default"
+  constants:
+    import:
+      - app_constants    # From export_constants/app_constants.yaml
+    local:
+      max_size: 1000
+  variables:
+    import:
+      - common_vars      # From export_variables/common_vars.yaml
+    local:
+      is_large: request.resource.attr.size > C.max_size
+  rules:
+    # Use C.constant_name or V.variable_name
+```
+
+## Schema Validation
+
+Attach JSON schemas to validate principal and resource attributes:
+
+```yaml
+resourcePolicy:
+  resource: leave_request
+  version: "default"
+  schemas:
+    principalSchema:
+      ref: cerbos:///principal.json
+    resourceSchema:
+      ref: cerbos:///resources/leave_request.json
+  rules:
+    # Schemas are validated before rules are evaluated
+```
+
+Schema references use the format:
+- `cerbos:///schema.json` - Load from configured schema source
+- `file:///path/to/schema.json` - Load from file system
+- `https://example.com/schema.json` - Load from URL
+
+## Scoped Policies
+
+Create scope-specific variations of resource policies:
+
+```yaml
+# Base policy: resource_policies/document.yaml
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: document
+  version: "default"
+  rules:
+    - actions: ["view"]
+      effect: EFFECT_ALLOW
+      roles: ["user"]
+```
+
+```yaml
+# Scoped policy: resource_policies/document.acme.yaml
+apiVersion: api.cerbos.dev/v1
+resourcePolicy:
+  resource: document
+  version: "default"
+  scope: "acme"  # Only applies to scope=acme
+  rules:
+    - actions: ["view", "edit"]  # More permissive
+      effect: EFFECT_ALLOW
+      roles: ["user"]
+```
+
+When a request includes `scope: "acme"`, Cerbos will use the scoped policy.
+
+### Scope Permissions
+
+Control how scoped policies interact with parent scopes:
+
+```yaml
+resourcePolicy:
+  resource: document
+  version: "default"
+  scope: "acme.corp.engineering"
+  scopePermissions: SCOPE_PERMISSIONS_OVERRIDE_PARENT  # Default
+  rules:
+    # These rules replace parent scope rules
+```
+
+Options:
+- `SCOPE_PERMISSIONS_OVERRIDE_PARENT` - Replace parent rules (default)
+- `SCOPE_PERMISSIONS_MERGE_PARENT` - Combine with parent rules
+
+## Action Wildcards
+
+Actions support wildcard matching:
+
+```yaml
+rules:
+  # Match all actions
+  - actions: ["*"]
+    effect: EFFECT_ALLOW
+    roles: ["admin"]
+  
+  # Match view:public, view:private, view:internal, etc.
+  - actions: ["view:*"]
+    effect: EFFECT_ALLOW
+    roles: ["user"]
+  
+  # Combine wildcards with specific actions
+  - actions: ["read:*", "list", "create"]
+    effect: EFFECT_ALLOW
+    roles: ["contributor"]
+```
+
+## Output Expressions
+
+Rules can emit structured output when they match:
+
+```yaml
+rules:
+  - actions: ["view"]
+    effect: EFFECT_ALLOW
+    roles: ["user"]
+    output:
+      when:
+        ruleActivated: |-
+          {
+            "message": "User viewed resource",
+            "timestamp": now(),
+            "resource_id": request.resource.id
+          }
+        conditionNotMet: |-
+          {
+            "message": "Access denied by condition"
+          }
+```
+
+Outputs are included in the API response for audit logging or UX customization.
+
+## Multiple Policy Versions
+
+Maintain multiple versions of a policy:
+
+```yaml
+# resource_policies/document_v1.yaml
+resourcePolicy:
+  resource: document
+  version: "v1"
+  rules:
+    - actions: ["view"]
+      effect: EFFECT_ALLOW
+      roles: ["user"]
+```
+
+```yaml
+# resource_policies/document_v2.yaml
+resourcePolicy:
+  resource: document
+  version: "v2"
+  rules:
+    - actions: ["view", "edit"]  # More permissive in v2
+      effect: EFFECT_ALLOW
+      roles: ["user"]
+```
+
+Clients specify the version in CheckResources requests:
+
+```json
+{
+  "resource": {
+    "kind": "document",
+    "id": "123",
+    "policyVersion": "v2"
+  }
+}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Descriptive Names" icon="tag">
+    Name your rules for easier debugging: `name: "manager-approval-pending-only"`
+  </Card>
+  
+  <Card title="Start Restrictive" icon="lock">
+    Begin with minimal permissions and add rules as needed, rather than starting permissive.
+  </Card>
+  
+  <Card title="Extract Derived Roles" icon="share-nodes">
+    If multiple policies check `owner == principal.id`, create an `owner` derived role instead.
+  </Card>
+  
+  <Card title="Use Variables" icon="brackets-curly">
+    Define complex conditions as variables for reusability and clarity.
+  </Card>
+</CardGroup>
+
+<Tip>
+  Order matters for readability but not for evaluation. Cerbos evaluates all matching rules regardless of order.
+</Tip>
+
+## Testing Resource Policies
+
+Always write tests for your policies:
+
+```yaml
+# tests/document_test.yaml
+name: DocumentTestSuite
+description: Tests for document resource policy
+
+principals:
+  alice:
+    id: alice
+    roles: ["user"]
+    attr:
+      department: engineering
+
+resources:
+  public_doc:
+    kind: document
+    id: doc1
+    attr:
+      owner: bob
+      public: true
+
+tests:
+  - name: Public documents viewable by all
+    input:
+      principals: [alice]
+      resources: [public_doc]
+      actions: [view]
+    expected:
+      - principal: alice
+        resource: public_doc
+        actions:
+          view: EFFECT_ALLOW
+```
+
+Run tests with:
+
+```bash
+cerbos compile --tests=tests /path/to/policies
+```
+
+Learn more in [Policy Testing](/policies/testing).
+
+## Common Patterns
+
+<AccordionGroup>
+  <Accordion title="Owner-Based Access">
+    ```yaml
+    rules:
+      - actions: ["edit", "delete"]
+        effect: EFFECT_ALLOW
+        roles: ["user"]
+        condition:
+          match:
+            expr: request.resource.attr.owner == request.principal.id
+    ```
+  </Accordion>
+  
+  <Accordion title="Department Isolation">
+    ```yaml
+    rules:
+      - actions: ["view"]
+        effect: EFFECT_ALLOW
+        roles: ["employee"]
+        condition:
+          match:
+            expr: request.resource.attr.department == request.principal.attr.department
+    ```
+  </Accordion>
+  
+  <Accordion title="Status-Based Approval">
+    ```yaml
+    rules:
+      - actions: ["approve"]
+        effect: EFFECT_ALLOW
+        roles: ["manager"]
+        condition:
+          match:
+            all:
+              of:
+                - expr: request.resource.attr.status == "PENDING"
+                - expr: request.resource.attr.amount < 10000
+    ```
+  </Accordion>
+  
+  <Accordion title="Time-Based Access">
+    ```yaml
+    rules:
+      - actions: ["edit"]
+        effect: EFFECT_ALLOW
+        roles: ["user"]
+        condition:
+          match:
+            expr: |-
+              timestamp(request.resource.attr.created_at).timeSince() < duration("24h")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Error: Rule does not specify any roles or derived roles">
+    Every rule needs either `roles` or `derivedRoles` (or both):
+    
+    ```yaml
+    # Wrong
+    rules:
+      - actions: ["view"]
+        effect: EFFECT_ALLOW
+    
+    # Correct
+    rules:
+      - actions: ["view"]
+        effect: EFFECT_ALLOW
+        roles: ["user"]
+    ```
+  </Accordion>
+  
+  <Accordion title="Error: Derived role 'X' is not defined in any imports">
+    Make sure the derived role is defined and imported:
+    
+    ```yaml
+    resourcePolicy:
+      importDerivedRoles:
+        - common_roles  # Must contain the referenced role
+      rules:
+        - actions: ["edit"]
+          derivedRoles: ["owner"]  # Must be in common_roles
+    ```
+  </Accordion>
+  
+  <Accordion title="My condition isn't working">
+    Check:
+    - Condition expressions use CEL syntax
+    - Variable references use correct prefix (V. for variables, C. for constants)
+    - Attribute paths match your request data (e.g., `request.resource.attr.owner`)
+    
+    Test conditions with `cerbos compile` to catch syntax errors.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Derived Roles" icon="users-gear" href="/policies/derived-roles">
+    Create dynamic roles based on context
+  </Card>
+  
+  <Card title="Conditions" icon="code" href="/policies/conditions">
+    Master CEL expressions for complex rules
+  </Card>
+  
+  <Card title="Testing" icon="flask" href="/policies/testing">
+    Write comprehensive policy tests
+  </Card>
+</CardGroup>

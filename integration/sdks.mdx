@@ -1,0 +1,150 @@
+---
+title: Client SDKs
+description: Official Cerbos SDKs for integrating authorization into your applications
+---
+
+Cerbos provides official client SDKs for multiple programming languages, making it easy to integrate authorization into your applications. All SDKs provide type-safe interfaces for calling the Cerbos PDP APIs.
+
+## Available SDKs
+
+<CardGroup cols={2}>
+  <Card
+    title="Go SDK"
+    icon="golang"
+    href="https://github.com/cerbos/cerbos-sdk-go"
+  >
+    Official Go client for Cerbos authorization
+  </Card>
+  
+  <Card
+    title="Java SDK"
+    icon="java"
+    href="https://github.com/cerbos/cerbos-sdk-java"
+  >
+    Official Java client for Cerbos authorization
+  </Card>
+  
+  <Card
+    title="JavaScript SDK"
+    icon="js"
+    href="https://github.com/cerbos/cerbos-sdk-javascript"
+  >
+    Official JavaScript/TypeScript client for Cerbos authorization
+  </Card>
+  
+  <Card
+    title=".NET SDK"
+    icon="microsoft"
+    href="https://github.com/cerbos/cerbos-sdk-net"
+  >
+    Official .NET client for Cerbos authorization
+  </Card>
+  
+  <Card
+    title="PHP SDK"
+    icon="php"
+    href="https://github.com/cerbos/cerbos-sdk-php"
+  >
+    Official PHP client for Cerbos authorization
+  </Card>
+  
+  <Card
+    title="Python SDK"
+    icon="python"
+    href="https://github.com/cerbos/cerbos-sdk-python"
+  >
+    Official Python client for Cerbos authorization
+  </Card>
+  
+  <Card
+    title="Ruby SDK"
+    icon="gem"
+    href="https://github.com/cerbos/cerbos-sdk-ruby"
+  >
+    Official Ruby client for Cerbos authorization
+  </Card>
+  
+  <Card
+    title="Rust SDK"
+    icon="rust"
+    href="https://github.com/cerbos/cerbos-sdk-rust"
+  >
+    Official Rust client for Cerbos authorization
+  </Card>
+</CardGroup>
+
+## Core API Methods
+
+All SDKs provide access to the two primary Cerbos PDP APIs:
+
+### CheckResources
+
+The `CheckResources` API answers the question: "Can this principal perform these actions on these resources?"
+
+This is the most common API used in applications to make authorization decisions. You provide:
+
+- **Principal**: The user or service making the request (ID and roles)
+- **Resources**: One or more resources with their attributes
+- **Actions**: The actions to check (e.g., "view", "edit", "delete")
+
+The API returns an `EFFECT_ALLOW` or `EFFECT_DENY` decision for each action on each resource.
+
+<Tip>
+Use `CheckResources` when you have specific resource instances and need to check if a principal can perform actions on them.
+</Tip>
+
+### PlanResources
+
+The `PlanResources` API answers the question: "Which resources of this kind can this principal access?"
+
+This API is designed for filtering large datasets efficiently. Instead of checking permissions for each resource individually, it returns a query plan that can be used to filter resources at the database level.
+
+The query plan can be:
+- **Unconditional**: All resources are allowed/denied
+- **Conditional**: Resources matching specific conditions are allowed
+
+Use [query plan adapters](/integration/query-plan-adapters) to convert the query plan into database-specific queries.
+
+<Tip>
+Use `PlanResources` when you need to filter a list or dataset based on what the principal can access, especially for pagination or search results.
+</Tip>
+
+## SDK Features
+
+All official Cerbos SDKs provide:
+
+- **Type-safe API clients** for CheckResources and PlanResources
+- **Connection management** with configurable timeouts and retries
+- **TLS/mTLS support** for secure communication
+- **Metadata and tracing** support for observability
+- **Request validation** to catch errors before sending to the PDP
+- **Async/sync interfaces** (where applicable to the language)
+
+## Getting Started
+
+Each SDK repository contains:
+
+- Installation instructions for your package manager
+- Quickstart guides and examples
+- API reference documentation
+- Integration patterns and best practices
+
+Visit the GitHub repository for your preferred language to get started.
+
+## Common Integration Patterns
+
+When integrating Cerbos SDKs into your application:
+
+1. **Initialize once**: Create a single SDK client instance and reuse it across your application
+2. **Pass context**: Include relevant user and resource attributes in authorization checks
+3. **Handle errors**: Implement proper error handling for network and authorization failures
+4. **Cache appropriately**: Consider caching decisions for read-heavy workloads (with appropriate TTLs)
+5. **Monitor calls**: Track authorization check latency and failures in your observability stack
+
+## Support
+
+All SDKs are actively maintained by the Cerbos team. For issues or questions:
+
+- Open an issue on the specific SDK's GitHub repository
+- Join the [Cerbos Slack community](http://go.cerbos.io/slack)
+- Check the [documentation](https://docs.cerbos.dev) for detailed guides
