@@ -1,0 +1,151 @@
+---
+title: cerbos repl
+description: Interactive REPL for testing and experimenting with Cerbos policy conditions and expressions
+---
+
+Start an interactive REPL (Read-Eval-Print Loop) to try out and test Cerbos condition expressions. This is useful for experimenting with CEL (Common Expression Language) expressions used in policy conditions.
+
+## Usage
+
+```bash
+cerbos repl [flags]
+```
+
+## Description
+
+The REPL provides an interactive environment where you can:
+
+- Test CEL expressions used in policy conditions
+- Experiment with Cerbos-specific functions and variables
+- Validate expression syntax before using them in policies
+- Learn CEL syntax interactively
+
+The REPL supports multi-line input and maintains a history of commands for easy recall.
+
+## Flags
+
+<ParamField path="--history" type="string">
+  Path to history file for storing command history
+  
+  If not specified, history is stored in the default user data directory
+</ParamField>
+
+## Interactive Commands
+
+Once in the REPL, you can use the following:
+
+- **Enter expressions**: Type any valid CEL expression and press Enter
+- **Multi-line mode**: The REPL automatically detects incomplete expressions
+- **Ctrl+C**: Exit the REPL
+- **Up/Down arrows**: Navigate command history
+- **Tab completion**: Auto-complete function names and variables
+
+## Examples
+
+### Start the REPL
+
+```bash
+cerbos repl
+```
+
+### Test a simple expression
+
+```bash
+Cerbos REPL
+> 2 + 2
+4
+
+> "hello" + " " + "world"
+"hello world"
+```
+
+### Test condition expressions
+
+```bash
+> request.resource.attr.owner == "john"
+true
+
+> request.principal.attr.role in ["admin", "manager"]
+true
+```
+
+### Test Cerbos functions
+
+```bash
+> hierarchy("acme.corp.engineering")
+["acme.corp.engineering", "acme.corp", "acme"]
+
+> timeSince(timestamp("2024-01-01T00:00:00Z"))
+duration("720h")
+```
+
+### Test complex conditions
+
+```bash
+> request.resource.attr.status == "pending" && 
+  request.principal.attr.department == request.resource.attr.department
+true
+```
+
+## Available Variables
+
+The REPL provides access to common request context variables:
+
+- `request.principal` - Principal (user) information
+- `request.resource` - Resource being accessed
+- `request.auxData` - Auxiliary data from the request
+- `variables` - Exported variables from policies
+
+## Available Functions
+
+All Cerbos CEL functions are available in the REPL:
+
+### Standard CEL Functions
+
+- String manipulation: `contains()`, `startsWith()`, `endsWith()`, `matches()`
+- Collection operations: `size()`, `in`, `all()`, `exists()`, `filter()`, `map()`
+- Arithmetic: `+`, `-`, `*`, `/`, `%`
+- Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`
+- Logical: `&&`, `||`, `!`
+
+### Cerbos-Specific Functions
+
+- `hierarchy()` - Generate scope hierarchy
+- `timeSince()` - Calculate time since a timestamp
+- `now()` - Current timestamp
+- `timestamp()` - Parse timestamp string
+
+## History
+
+Command history is automatically saved and persisted between sessions. The default location is:
+
+- **Linux/macOS**: `~/.local/share/cerbos/repl_history`
+- **Windows**: `%LOCALAPPDATA%\cerbos\repl_history`
+
+## Use Cases
+
+<Accordion title="Policy development">
+Test condition expressions before adding them to your policies to ensure they work as expected.
+</Accordion>
+
+<Accordion title="Debugging">
+Reproduce and test specific condition logic that may be causing unexpected authorization decisions.
+</Accordion>
+
+<Accordion title="Learning CEL">
+Experiment with CEL syntax and functions in an interactive environment without needing to write full policies.
+</Accordion>
+
+<Accordion title="Expression validation">
+Verify that complex expressions evaluate correctly with different input values.
+</Accordion>
+
+## Notes
+
+<Note>
+The REPL evaluates expressions in isolation. It does not have access to actual policies or make authorization decisions - it only evaluates the expressions you enter.
+</Note>
+
+<Tip>
+Use the REPL to test conditions before adding them to your policies. This helps catch syntax errors and logic issues early.
+</Tip>

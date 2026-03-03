@@ -173,6 +173,71 @@ curl https://cerbos.example.com/admin/policies?includeDisabled=true \
 
 ---
 
+## InspectPolicies
+
+Inspect policies to see detailed information including which policies would be evaluated for a given request.
+
+### HTTP Request
+
+```bash
+GET /admin/policies/inspect
+```
+
+### Authentication
+
+Requires BasicAuth credentials configured in the Cerbos server.
+
+### Query Parameters
+
+<ParamField query="principal" type="string">
+  Principal ID to inspect policies for
+</ParamField>
+
+<ParamField query="resource" type="string">
+  Resource kind to inspect policies for
+</ParamField>
+
+<ParamField query="action" type="string">
+  Action to inspect policies for
+</ParamField>
+
+<ParamField query="includeDisabled" type="boolean">
+  Include disabled policies in the results
+</ParamField>
+
+### Response
+
+<ResponseField name="results" type="array">
+  Array of inspection results showing which policies would apply
+  
+  <Expandable title="Inspection Result">
+    <ResponseField name="policyId" type="string">
+      ID of the policy
+    </ResponseField>
+    
+    <ResponseField name="scope" type="string">
+      Scope of the policy
+    </ResponseField>
+    
+    <ResponseField name="actions" type="array">
+      Actions defined in the policy
+    </ResponseField>
+    
+    <ResponseField name="variables" type="object">
+      Variables defined in the policy
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl "https://cerbos.example.com/admin/policies/inspect?principal=user123&resource=album:object&action=view" \
+  -u admin:password
+```
+
+---
+
 ## GetPolicy
 
 Retrieve one or more policies by their IDs.

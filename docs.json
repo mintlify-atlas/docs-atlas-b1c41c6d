@@ -117,7 +117,9 @@
             "pages": [
               "cli/cerbos/server",
               "cli/cerbos/compile",
-              "cli/cerbos/run"
+              "cli/cerbos/run",
+              "cli/cerbos/healthcheck",
+              "cli/cerbos/repl"
             ]
           },
           {

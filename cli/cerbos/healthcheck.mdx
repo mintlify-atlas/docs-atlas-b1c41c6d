@@ -1,0 +1,130 @@
+---
+title: cerbos healthcheck
+description: Healthcheck utility for checking the status of a running Cerbos PDP server
+---
+
+Performs a healthcheck on a Cerbos PDP server. This command can be used as a Docker HEALTHCHECK command or for monitoring purposes.
+
+## Usage
+
+```bash
+cerbos healthcheck [flags]
+```
+
+## Description
+
+By default, the gRPC endpoint will be checked using the gRPC healthcheck protocol. This is usually sufficient for most cases as the Cerbos REST API is built on top of the gRPC API.
+
+When a Cerbos config file path is provided via `--config` or the `CERBOS_CONFIG` environment variable, the healthcheck will be automatically configured based on the settings from the file.
+
+## Flags
+
+### Configuration Mode
+
+<ParamField path="--config" type="string">
+  Path to Cerbos config file. When provided, healthcheck settings are read from the config file.
+  
+  Environment variable: `CERBOS_CONFIG`
+</ParamField>
+
+### Manual Configuration Mode
+
+<ParamField path="--host-port" type="string">
+  Host and port to connect to (e.g., `127.0.0.1:3593`)
+  
+  Environment variable: `CERBOS_HC_HOSTPORT`
+</ParamField>
+
+<ParamField path="--ca-cert" type="string">
+  Path to CA certificate for validating server certificate
+  
+  Environment variable: `CERBOS_HC_CACERT`
+</ParamField>
+
+<ParamField path="--no-tls" type="boolean">
+  Don't use TLS when connecting
+  
+  Environment variable: `CERBOS_HC_NOTLS`
+</ParamField>
+
+### Common Flags
+
+<ParamField path="--kind" type="string" default="grpc">
+  Healthcheck kind: `grpc` or `http`
+  
+  Environment variable: `CERBOS_HC_KIND`
+</ParamField>
+
+<ParamField path="--insecure" type="boolean" default="false">
+  Do not verify server certificate
+  
+  Environment variable: `CERBOS_HC_INSECURE`
+</ParamField>
+
+<ParamField path="--timeout" type="duration" default="2s">
+  Healthcheck timeout duration
+  
+  Environment variable: `CERBOS_HC_TIMEOUT`
+</ParamField>
+
+## Examples
+
+### Check gRPC endpoint with config file
+
+```bash
+cerbos healthcheck --config=/path/to/.cerbos.yaml
+```
+
+### Check HTTP endpoint ignoring certificate verification
+
+```bash
+cerbos healthcheck --config=/path/to/.cerbos.yaml --kind=http --insecure
+```
+
+### Check HTTP endpoint without TLS
+
+```bash
+cerbos healthcheck --kind=http --host-port=10.0.1.5:3592 --no-tls
+```
+
+### Docker healthcheck
+
+In your Dockerfile:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD cerbos healthcheck --config=/etc/cerbos/config.yaml
+```
+
+### Kubernetes liveness probe
+
+```yaml
+livenessProbe:
+  exec:
+    command:
+    - cerbos
+    - healthcheck
+    - --config=/config/.cerbos.yaml
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+## Exit Codes
+
+- **0**: Healthcheck passed
+- **1**: Healthcheck failed
+
+## Default Endpoints
+
+- **gRPC**: `127.0.0.1:3593`
+- **HTTP**: `127.0.0.1:3592`
+
+## Notes
+
+<Note>
+The gRPC healthcheck is the recommended method as it uses the standard gRPC health checking protocol and provides accurate status information.
+</Note>
+
+<Tip>
+When using the `--config` flag, the healthcheck command automatically detects the correct endpoint, TLS settings, and ports from your Cerbos configuration.
+</Tip>
